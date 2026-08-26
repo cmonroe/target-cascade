@@ -1,0 +1,49 @@
+From: Chad Monroe <chad.monroe@adtran.com>
+Date: Wed, 22 Jul 2026 12:00:00 -0700
+Subject: [PATCH] sound: soc: an7581: wire up telephony PCM platform and machine drivers
+
+an7581-pcm-tdm.c drives the EN7581 telephony PCM engine at 0x1fbd0000
+(descriptor-ring TDM DMA, PCM highway master for the external SLIC)
+and an7581-si3218x.c is the machine driver binding it to the
+slic-dummy codec; both are shipped via the target files/ overlay.
+The card exposes a playback-only PCM device 0 and a capture-only
+device 1, the layout the D2 voice stack opens as plughw:0,0 and
+plughw:0,1.
+---
+--- a/sound/soc/mediatek/Kconfig
++++ b/sound/soc/mediatek/Kconfig
+@@ -25,6 +25,26 @@ config SND_SOC_AN7581_WM8960
+ 	  Select Y if you have such device.
+ 	  If unsure select "N".
+ 
++config SND_SOC_AN7581_TDM
++	tristate "ASoC support for Airoha AN7581 telephony PCM"
++	depends on ARCH_AIROHA || COMPILE_TEST
++	help
++	  This adds the ASoC platform driver for the Airoha AN7581
++	  telephony PCM engine used to exchange voice frames with an
++	  external SLIC codec.
++	  Select Y if you have such device.
++	  If unsure select "N".
++
++config SND_SOC_AN7581_SI3218X
++	tristate "ASoC Audio driver for Airoha AN7581 with SI3218X SLIC"
++	depends on SND_SOC_AN7581_TDM
++	select SND_SOC_SLIC_DUMMY
++	help
++	  This adds the ASoC machine driver for Airoha AN7581 boards
++	  with a Silicon Labs Si3218x/Si3228x SLIC.
++	  Select Y if you have such device.
++	  If unsure select "N".
++
+ config SND_SOC_MT2701
+ 	tristate "ASoC support for Mediatek MT2701 chip"
+ 	depends on ARCH_MEDIATEK
+--- a/sound/soc/mediatek/an7581/Makefile
++++ b/sound/soc/mediatek/an7581/Makefile
+@@ -7,3 +7,5 @@ snd-soc-an7581-afe-y := \
+ 
+ obj-$(CONFIG_SND_SOC_AN7581) += snd-soc-an7581-afe.o
+ obj-$(CONFIG_SND_SOC_AN7581_WM8960) += an7581-wm8960.o
++obj-$(CONFIG_SND_SOC_AN7581_TDM) += an7581-pcm-tdm.o
++obj-$(CONFIG_SND_SOC_AN7581_SI3218X) += an7581-si3218x.o
