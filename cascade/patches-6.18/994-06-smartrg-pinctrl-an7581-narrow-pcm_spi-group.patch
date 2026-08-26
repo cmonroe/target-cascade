@@ -1,0 +1,23 @@
+From: Chad Monroe <chad.monroe@adtran.com>
+Date: Wed, 22 Jul 2026 12:00:00 -0700
+Subject: [PATCH] pinctrl: airoha: narrow an7581 pcm_spi group to the SPI pins
+
+The EN7581 GPIO_PCM_SPI_MODE iomux bit routes the SLIC SPI signals
+(SCLK/CS0/MOSI/MISO) onto pads gpio5-gpio8 (pins 18-21) only; the
+TDM half of the combined bus is selected separately via the pcm1
+group (pins 22-25). Listing all eight pins in the pcm_spi group
+makes it impossible to mux pcm_spi together with pcm1, which the
+SPI-controlled SLIC wiring requires, because the pinmux core
+rejects the overlapping pin claims.
+---
+--- a/drivers/pinctrl/airoha/pinctrl-an7581.c
++++ b/drivers/pinctrl/airoha/pinctrl-an7581.c
+@@ -399,7 +399,7 @@ static const int pcm2_pins[] = { 18, 19,
+ static const int spi_quad_pins[] = { 32, 33 };
+ static const int spi_pins[] = { 4, 5, 6, 7 };
+ static const int spi_cs1_pins[] = { 34 };
+-static const int pcm_spi_pins[] = { 18, 19, 20, 21, 22, 23, 24, 25 };
++static const int pcm_spi_pins[] = { 18, 19, 20, 21 };
+ static const int pcm_spi_int_pins[] = { 14 };
+ static const int pcm_spi_rst_pins[] = { 15 };
+ static const int pcm_spi_cs1_pins[] = { 43 };
