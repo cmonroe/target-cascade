@@ -103,6 +103,13 @@
 			compatible = "silabs,si3210";
 			reg = <0>;
 			spi-max-frequency = <1000000>;
+			/*
+			 * The SLIC answers only when SCLK is high at the rising
+			 * edge of its reset (measured on the SDG-8716v); mode 3
+			 * makes spi-gpio idle the clock high from setup on.
+			 */
+			spi-cpol;
+			spi-cpha;
 		};
 	};
 

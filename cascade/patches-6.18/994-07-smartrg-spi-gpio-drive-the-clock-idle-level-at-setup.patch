@@ -1,0 +1,32 @@
+From: Chad Monroe <chad.monroe@adtran.com>
+Date: Thu, 27 Aug 2026 09:30:00 -0700
+Subject: [PATCH] spi: gpio: drive the clock to its idle level at setup
+
+spi-gpio requests SCK as GPIOD_OUT_LOW and moves it to the CPOL idle
+level only inside chipselect(), so a mode 3 device sees SCLK low until
+its first transfer. A device held in reset across the boot can sample
+SCLK when the reset releases: the Si32184 SLIC on the SDG-8716v ignores
+its bus after a reset edge that saw SCLK low, and the first transfer
+(the probe that follows the release) comes too late. Drive SCK to the
+idle level of the device's mode in setup(), so the line rests at the
+right level from the moment the device exists. chipselect() keeps
+setting it per transfer, so a bus shared by devices of different
+polarity behaves as before.
+---
+--- a/drivers/spi/spi-gpio.c
++++ b/drivers/spi/spi-gpio.c
+@@ -235,6 +235,14 @@ static int spi_gpio_setup(struct spi_dev
+ 		}
+ 	}
+ 
++	/*
++	 * Park the clock at its idle level now, not at the first chip select:
++	 * a device held in reset across the boot can sample SCLK when its
++	 * reset releases, long before the first transfer (the Si32184 SLIC
++	 * ignores its bus after a reset edge that saw SCLK low).
++	 */
++	gpiod_set_value_cansleep(spi_gpio->sck, !!(spi->mode & SPI_CPOL));
++
+ 	return spi_bitbang_setup(spi);
+ }
+ 
