@@ -13,6 +13,12 @@
  * channel n occupies the n-th 1/channels slice of the ALSA buffer and
  * each descriptor advances one period within every slice.
  *
+ * At 16 kHz the SLIC keeps the narrowband timeslot of line k at frame bit
+ * k*16 and sends the second sample of each pair half a frame later, at bit
+ * k*16 + 128. The driver gives every ALSA channel two engine channels at
+ * those two frame bits and merges the two 8 kHz sample streams into one
+ * 16 kHz stream in the bounce copy.
+ *
  * DT binding:
  *	voip_pcm: pcm@1fbd0000 {
  *		compatible = "airoha,en7581-pcm";
@@ -31,6 +37,7 @@
 #include <linux/interrupt.h>
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/platform_device.h>
 #include <linux/regmap.h>
@@ -98,6 +105,17 @@
 #define AN7581_PCM_MAX_FRAMES		1020
 #define AN7581_PCM_MAX_CHANNELS		2
 #define AN7581_PCM_SLOTS		16
+/*
+ * The engine holds 32 slot descriptors in 16 register pairs. Only the first
+ * 16 fit the 256-bit frame at 16 bits each, and the reset values of the rest
+ * are 8-bit slots at bits 128 to 248. That is where the second sample of a
+ * wideband pair sits, so the 16 kHz path parks them past the frame.
+ */
+#define AN7581_PCM_HW_SLOTS		32
+#define AN7581_PCM_RATE_NB		8000
+#define AN7581_PCM_RATE_WB		16000
+/* the second sample of a wideband pair sits half a 256-bit frame later */
+#define AN7581_PCM_WB_PAIR_OFF		128
 #define AN7581_PCM_BOUNCE_BYTES		(AN7581_PCM_MAX_FRAMES * 2 * \
 					 AN7581_PCM_MAX_CHANNELS)
 
@@ -137,8 +155,11 @@ struct an7581_pcm_stream {
 	u8 *bounce_cpu;
 	dma_addr_t bounce_dma;
 	unsigned int channels;
+	unsigned int rate;
+	unsigned int dma_channels;
 	unsigned int periods;
 	unsigned int period_frames;
+	unsigned int desc_frames;
 	unsigned int chan_bytes;
 	unsigned int hw_idx;
 	unsigned int pending;
@@ -148,11 +169,19 @@ struct an7581_pcm_stream {
 	bool running;
 };
 
+struct an7581_pcm_cfg {
+	unsigned int rate;
+	u32 chbfosr;
+	u32 dchenr;
+};
+
 struct an7581_pcm_stats {
 	u64 irq_total;
 	u64 isr_bits[16];
 	u64 completions[2];
 	u64 kicks[2];
+	u64 resync_runs;
+	u64 resync_skips_busy;
 };
 
 struct an7581_pcm {
@@ -166,12 +195,29 @@ struct an7581_pcm {
 	struct an7581_pcm_stream stream[2];
 	struct an7581_pcm_stats stats;
 	struct dentry *debugfs;
+	struct mutex cfg_lock;
+	struct an7581_pcm_cfg cfg;
+	bool cfg_dirty;
+	bool reprogramming;
 };
+
+static void an7581_pcm_hw_init(struct an7581_pcm *pcm);
+static void an7581_pcm_slots_program(struct an7581_pcm *pcm);
 
 static u32 an7581_pcm_dma_addr(dma_addr_t addr)
 {
 	/* descriptor and buffer addresses carry physical | BIT(31) */
 	return lower_32_bits(addr) | BIT(31);
+}
+
+/*
+ * aos pcmTsReSet() clears the channel enable before it writes the new mask,
+ * on every remap, so the engine always sees a falling edge on the register.
+ */
+static void an7581_pcm_dchenr_set(struct an7581_pcm *pcm, u32 mask)
+{
+	writel(0, pcm->base + REG_DCHENR);
+	writel(mask, pcm->base + REG_DCHENR);
 }
 
 static struct an7581_pcm_stream *an7581_pcm_substream_get(
@@ -185,12 +231,12 @@ static void an7581_pcm_desc_arm(struct an7581_pcm_stream *stream,
 {
 	struct an7581_pcm_hwdesc *desc = &stream->desc[idx];
 
-	desc->chan_valid = (1 << stream->channels) - 1;
+	desc->chan_valid = (1 << stream->dma_channels) - 1;
 	desc->buf_addr = an7581_pcm_dma_addr(stream->bounce_dma +
 					     idx * AN7581_PCM_BOUNCE_BYTES);
 	dma_wmb();
 	WRITE_ONCE(desc->status, DESC_OWN |
-		   FIELD_PREP(DESC_SAMPLE_SIZE, stream->period_frames));
+		   FIELD_PREP(DESC_SAMPLE_SIZE, stream->desc_frames));
 }
 
 static void an7581_pcm_stream_kick(struct an7581_pcm *pcm, int dir)
@@ -209,19 +255,80 @@ static void an7581_pcm_dma_enable(struct an7581_pcm *pcm, int dir, bool on)
 	writel(on ? (val | mask) : (val & ~mask), pcm->base + REG_TRDCR);
 }
 
+/*
+ * A wideband line runs on two engine channels: the first carries the sample
+ * the SLIC places at frame bit k*16, the second the sample it places half a
+ * frame later, so the two 8 kHz streams interleave into one 16 kHz stream.
+ */
+static void an7581_pcm_wb_split(s16 *first, s16 *second, const s16 *src,
+				unsigned int frames)
+{
+	unsigned int n;
+
+	for (n = 0; n < frames; n++) {
+		first[n] = src[2 * n];
+		second[n] = src[2 * n + 1];
+	}
+}
+
+static void an7581_pcm_wb_merge(s16 *dst, const s16 *first, const s16 *second,
+				unsigned int frames)
+{
+	unsigned int n;
+
+	for (n = 0; n < frames; n++) {
+		dst[2 * n] = first[n];
+		dst[2 * n + 1] = second[n];
+	}
+}
+
 static void an7581_pcm_tx_copy(struct an7581_pcm_stream *stream,
 			       unsigned int idx)
 {
 	struct snd_pcm_runtime *runtime = stream->substream->runtime;
-	unsigned int bytes = stream->period_frames * 2;
+	unsigned int bytes = stream->desc_frames * 2;
 	unsigned int off = (stream->tx_fill_frames % runtime->buffer_size) * 2;
 	u8 *bounce = stream->bounce_cpu + idx * AN7581_PCM_BOUNCE_BYTES;
 	unsigned int c;
 
+	if (stream->rate != AN7581_PCM_RATE_WB) {
+		for (c = 0; c < stream->channels; c++)
+			memcpy(bounce + c * bytes,
+			       runtime->dma_area + c * stream->chan_bytes + off,
+			       bytes);
+		return;
+	}
+
 	for (c = 0; c < stream->channels; c++)
-		memcpy(bounce + c * bytes,
-		       runtime->dma_area + c * stream->chan_bytes + off,
-		       bytes);
+		an7581_pcm_wb_split((s16 *)(bounce + 2 * c * bytes),
+				    (s16 *)(bounce + (2 * c + 1) * bytes),
+				    (s16 *)(runtime->dma_area +
+					    c * stream->chan_bytes + off),
+				    stream->desc_frames);
+}
+
+static void an7581_pcm_rx_copy(struct an7581_pcm_stream *stream,
+			       unsigned int idx)
+{
+	struct snd_pcm_runtime *runtime = stream->substream->runtime;
+	unsigned int bytes = stream->desc_frames * 2;
+	unsigned int off = (stream->hw_ptr_frames % runtime->buffer_size) * 2;
+	u8 *bounce = stream->bounce_cpu + idx * AN7581_PCM_BOUNCE_BYTES;
+	unsigned int c;
+
+	if (stream->rate != AN7581_PCM_RATE_WB) {
+		for (c = 0; c < stream->channels; c++)
+			memcpy(runtime->dma_area + c * stream->chan_bytes + off,
+			       bounce + c * bytes, bytes);
+		return;
+	}
+
+	for (c = 0; c < stream->channels; c++)
+		an7581_pcm_wb_merge((s16 *)(runtime->dma_area +
+					    c * stream->chan_bytes + off),
+				    (s16 *)(bounce + 2 * c * bytes),
+				    (s16 *)(bounce + (2 * c + 1) * bytes),
+				    stream->desc_frames);
 }
 
 static unsigned int an7581_pcm_tx_fill(struct an7581_pcm *pcm,
@@ -318,21 +425,12 @@ static unsigned int an7581_pcm_tx_reclaim(struct an7581_pcm *pcm,
 static unsigned int an7581_pcm_rx_service(struct an7581_pcm *pcm,
 					  struct an7581_pcm_stream *stream)
 {
-	struct snd_pcm_runtime *runtime = stream->substream->runtime;
-	unsigned int bytes = stream->period_frames * 2;
 	unsigned int completed = 0;
-	unsigned int off, c;
-	u8 *bounce;
 
 	while (stream->pending &&
 	       !(READ_ONCE(stream->desc[stream->hw_idx].status) & DESC_OWN)) {
 		dma_rmb();
-		bounce = stream->bounce_cpu +
-			 stream->hw_idx * AN7581_PCM_BOUNCE_BYTES;
-		off = (stream->hw_ptr_frames % runtime->buffer_size) * 2;
-		for (c = 0; c < stream->channels; c++)
-			memcpy(runtime->dma_area + c * stream->chan_bytes + off,
-			       bounce + c * bytes, bytes);
+		an7581_pcm_rx_copy(stream, stream->hw_idx);
 		stream->hw_ptr_frames += stream->period_frames;
 		an7581_pcm_desc_arm(stream, stream->hw_idx);
 		an7581_pcm_stream_kick(pcm, SNDRV_PCM_STREAM_CAPTURE);
@@ -350,25 +448,28 @@ static void an7581_pcm_stream_start(struct an7581_pcm *pcm,
 {
 	unsigned int i;
 
-	/* per-channel sub-buffer stride is one period (matches aos 0xA0=160) */
-	writel(stream->period_frames * 2, pcm->base + REG_CHBFOSR);
-	writel((1 << stream->channels) - 1, pcm->base + REG_DCHENR);
-
 	stream->hw_ptr_frames = 0;
 	stream->reported_frames = 0;
 	stream->tx_fill_frames = 0;
 	stream->running = true;
 
-	an7581_pcm_dma_enable(pcm, dir, true);
-
+	/*
+	 * Arm before the DMA enable: aos treats a TX buffer underrun as fatal
+	 * and resets the block, so the engine must never see the TX DMA
+	 * enabled over an empty ring. Capture arms its whole ring first for
+	 * the same reason.
+	 */
 	if (dir == SNDRV_PCM_STREAM_PLAYBACK) {
 		an7581_pcm_tx_fill(pcm, stream);
+		an7581_pcm_dma_enable(pcm, dir, true);
+		an7581_pcm_stream_kick(pcm, dir);
 		return;
 	}
 
 	for (i = 0; i < AN7581_PCM_NUM_DESC; i++)
 		an7581_pcm_desc_arm(stream, i);
 	stream->pending = AN7581_PCM_NUM_DESC;
+	an7581_pcm_dma_enable(pcm, dir, true);
 	an7581_pcm_stream_kick(pcm, dir);
 }
 
@@ -394,17 +495,35 @@ static void an7581_pcm_stream_stop(struct an7581_pcm *pcm,
 	}
 }
 
+/*
+ * trigger(STOP) is the only path that clears running, so a stream whose engine
+ * never completed a descriptor stays latched when the application dies while
+ * blocked. hw_free and close force the direction idle instead.
+ */
+static void an7581_pcm_stream_force_idle(struct an7581_pcm *pcm,
+					 struct an7581_pcm_stream *stream,
+					 int dir)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&pcm->lock, flags);
+	if (stream->running)
+		an7581_pcm_stream_stop(pcm, stream, dir);
+	spin_unlock_irqrestore(&pcm->lock, flags);
+}
+
 static void an7581_pcm_stream_quiesce(struct an7581_pcm *pcm,
 				      struct an7581_pcm_stream *stream)
 {
-	unsigned int period_ms = DIV_ROUND_UP(stream->period_frames, 8);
+	/* one engine channel carries one sample per 8 kHz frame at any rate */
+	unsigned int period_ms = DIV_ROUND_UP(stream->desc_frames, 8);
 	unsigned long timeout = jiffies + msecs_to_jiffies(4 * period_ms + 20);
 	unsigned int prev = UINT_MAX;
 	unsigned int cur;
 	unsigned long flags;
 	unsigned int i;
 
-	if (!stream->period_frames)
+	if (!stream->desc_frames)
 		return;
 
 	/*
@@ -511,17 +630,43 @@ static irqreturn_t an7581_pcm_irq(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
+static void an7581_pcm_stats_bounce(struct seq_file *s,
+				    struct an7581_pcm_stream *stream,
+				    const char *name)
+{
+	unsigned int bytes = stream->desc_frames * 2;
+	unsigned int i, k;
+	u8 *b;
+
+	if (!stream->bounce_cpu || !stream->dma_channels)
+		return;
+
+	b = stream->bounce_cpu + stream->hw_idx * AN7581_PCM_BOUNCE_BYTES;
+	seq_printf(s, "%s bounce_dma=%pad\n", name, &stream->bounce_dma);
+	for (k = 0; k < stream->dma_channels; k++) {
+		s16 *p = (s16 *)(b + k * bytes);
+
+		seq_printf(s, "%s_bounce%u:", name, k);
+		for (i = 0; i < 4; i++)
+			seq_printf(s, " %d", p[i]);
+		seq_puts(s, "\n");
+	}
+}
+
 static int an7581_pcm_stats_show(struct seq_file *s, void *unused)
 {
 	static const char * const isr_names[16] = {
 		[0] = "frame_boundary", [2] = "tdesc_update",
 		[3] = "rdesc_update", [4] = "tdesc_end", [5] = "rdesc_end",
 		[6] = "tbuf_underrun", [7] = "rbuf_overrun", [8] = "ahb_bus_err",
+		[9] = "hunt_overtime", [10] = "hunt_err_after_finish",
 		[11] = "zsi", [12] = "isi", [14] = "slic",
 	};
 	static const char * const dir_names[2] = { "tx", "rx" };
 	struct an7581_pcm *pcm = s->private;
+	struct an7581_pcm_cfg cfg;
 	unsigned long flags;
+	bool dirty;
 	int dir, i;
 
 	seq_printf(s, "irq_total %llu\n", pcm->stats.irq_total);
@@ -536,16 +681,36 @@ static int an7581_pcm_stats_show(struct seq_file *s, void *unused)
 		seq_printf(s, "%s_completions %llu\n%s_kicks %llu\n",
 			   dir_names[dir], pcm->stats.completions[dir],
 			   dir_names[dir], pcm->stats.kicks[dir]);
+	seq_printf(s, "resync_runs %llu\nresync_skips_busy %llu\n",
+		   pcm->stats.resync_runs, pcm->stats.resync_skips_busy);
+
+	mutex_lock(&pcm->cfg_lock);
+	cfg = pcm->cfg;
+	dirty = pcm->cfg_dirty;
+	mutex_unlock(&pcm->cfg_lock);
+
+	seq_printf(s, "rate %u cfg_dirty %u want_chbfosr %u want_dchenr 0x%08x\n",
+		   cfg.rate, dirty, cfg.chbfosr, cfg.dchenr);
+	seq_printf(s, "picr 0x%08x trdcr 0x%08x dchenr 0x%08x chbfosr 0x%08x imr 0x%08x\n",
+		   readl(pcm->base + REG_PICR), readl(pcm->base + REG_TRDCR),
+		   readl(pcm->base + REG_DCHENR), readl(pcm->base + REG_CHBFOSR),
+		   readl(pcm->base + REG_IMR));
+	for (i = 0; i < AN7581_PCM_HW_SLOTS / 2; i++)
+		seq_printf(s, "pttscr%d 0x%08x prtscr%d 0x%08x\n",
+			   i, readl(pcm->base + REG_PTTSCR(i)),
+			   i, readl(pcm->base + REG_PRTSCR(i)));
 
 	spin_lock_irqsave(&pcm->lock, flags);
 	for (dir = 0; dir < 2; dir++) {
 		struct an7581_pcm_stream *stream = &pcm->stream[dir];
 
-		seq_printf(s, "%s running=%d hw_idx=%u pending=%u hw_ptr=%llu reported=%llu fill=%llu periods=%u period_frames=%u\n",
+		seq_printf(s, "%s running=%d hw_idx=%u pending=%u hw_ptr=%llu reported=%llu fill=%llu periods=%u period_frames=%u rate=%u channels=%u dma_channels=%u desc_frames=%u\n",
 			   dir_names[dir], stream->running, stream->hw_idx,
 			   stream->pending, stream->hw_ptr_frames,
 			   stream->reported_frames, stream->tx_fill_frames,
-			   stream->periods, stream->period_frames);
+			   stream->periods, stream->period_frames,
+			   stream->rate, stream->channels,
+			   stream->dma_channels, stream->desc_frames);
 		if (!stream->desc)
 			continue;
 		for (i = 0; i < AN7581_PCM_NUM_DESC; i++)
@@ -554,16 +719,7 @@ static int an7581_pcm_stats_show(struct seq_file *s, void *unused)
 				   READ_ONCE(stream->desc[i].status),
 				   stream->desc[i].chan_valid,
 				   stream->desc[i].buf_addr);
-		if (stream->bounce_cpu) {
-			s16 *b = (s16 *)(stream->bounce_cpu +
-					 stream->hw_idx * AN7581_PCM_BOUNCE_BYTES);
-
-			seq_printf(s, "%s bounce_dma=%pad bounce[hw_idx]:",
-				   dir_names[dir], &stream->bounce_dma);
-			for (i = 0; i < 8; i++)
-				seq_printf(s, " %d", b[i]);
-			seq_puts(s, "\n");
-		}
+		an7581_pcm_stats_bounce(s, stream, dir_names[dir]);
 		if (stream->substream && stream->substream->runtime &&
 		    stream->substream->runtime->dma_area) {
 			s16 *a = (s16 *)stream->substream->runtime->dma_area;
@@ -579,6 +735,150 @@ static int an7581_pcm_stats_show(struct seq_file *s, void *unused)
 	return 0;
 }
 DEFINE_SHOW_ATTRIBUTE(an7581_pcm_stats);
+
+/*
+ * CHBFOSR and DCHENR are single registers that both directions share, and the
+ * slot map depends on the line rate, so the engine configuration is latched
+ * here and applied by one reprogram with both directions stopped. The caller
+ * holds cfg_lock across the latch and the reprogram.
+ */
+static void an7581_pcm_cfg_update(struct an7581_pcm *pcm, unsigned int rate,
+				  u32 chbfosr, u32 dchenr)
+{
+	lockdep_assert_held(&pcm->cfg_lock);
+
+	if (pcm->cfg.rate != rate || pcm->cfg.chbfosr != chbfosr ||
+	    pcm->cfg.dchenr != dchenr)
+		pcm->cfg_dirty = true;
+	pcm->cfg.rate = rate;
+	pcm->cfg.chbfosr = chbfosr;
+	pcm->cfg.dchenr = dchenr;
+}
+
+/*
+ * The engine holds the receive framing phase that turns highway bits into
+ * descriptor bytes, and a TRDCR receive-DMA disable does not clear it. A
+ * restart that only re-enables the DMA can resume one byte late, which shifts
+ * the whole capture stream by one byte until the interface restarts.
+ *
+ * This repeats the sequence that cleared the fault in the field, in the
+ * hw_init order and with the hw_init values. It includes the interrupt mask
+ * and DMA enable clear, the CFG_VALID drop, the slot registers, CHBFOSR, the
+ * DCHENR clear-then-set transition, the CFG_VALID raise, and the interrupt
+ * mask restore.
+ *
+ * It excludes one element of that sequence, the descriptor ring base and size
+ * registers. The exclusion is safe: the software ring state stayed healthy
+ * through the fault, because hw_ptr advanced at 100 periods a second and the
+ * completions never desynced, so the ring needs no repair. A write to a ring
+ * base register could move the engine's ring cursor away from hw_idx, which
+ * the driver keeps across a stop and a start, so leaving those registers alone
+ * removes that question by construction.
+ *
+ * The caller holds cfg_lock and calls this only with cfg_dirty clear, so
+ * pcm->cfg describes the registers the hardware runs.
+ */
+static void an7581_pcm_iface_resync(struct an7581_pcm *pcm)
+{
+	u32 picr = readl(pcm->base + REG_PICR);
+	u32 imr = readl(pcm->base + REG_IMR);
+
+	writel(0, pcm->base + REG_IMR);
+	writel(0, pcm->base + REG_TRDCR);
+	writel(picr & ~PICR_CFG_VALID, pcm->base + REG_PICR);
+
+	an7581_pcm_slots_program(pcm);
+	writel(pcm->cfg.chbfosr, pcm->base + REG_CHBFOSR);
+	an7581_pcm_dchenr_set(pcm, pcm->cfg.dchenr);
+
+	usleep_range(1000, 2000);
+	writel(picr | PICR_CFG_VALID, pcm->base + REG_PICR);
+	writel(imr, pcm->base + REG_IMR);
+}
+
+/*
+ * Both forms of re-init drop CFG_VALID, so neither must race a running engine,
+ * and the engine must own no descriptor when one starts. They sleep, so callers
+ * are process context and hold cfg_lock. A full re-init re-runs the whole
+ * hardware setup for a changed configuration. A partial one repeats the
+ * interface part of that setup and leaves the descriptor ring registers alone.
+ */
+static int an7581_pcm_engine_reinit_locked(struct an7581_pcm *pcm, bool full)
+{
+	unsigned long flags;
+	bool busy;
+	int dir;
+
+	lockdep_assert_held(&pcm->cfg_lock);
+
+	/*
+	 * hw_params holds cfg_lock across the agreement check and this call,
+	 * and the agreement covers the rate, the channel count and the period
+	 * size, so a dirty config means the other direction has no hw_params
+	 * of its own. A conforming caller therefore cannot trigger a stream
+	 * between this check and hw_init. The ALSA core does not serialize the
+	 * trigger ioctl against hw_params, so the same critical section also
+	 * raises the reprogramming flag, which bars a START from any caller
+	 * until the handshake ends.
+	 */
+	spin_lock_irqsave(&pcm->lock, flags);
+	busy = pcm->stream[0].running || pcm->stream[1].running;
+	if (!busy)
+		pcm->reprogramming = true;
+	else if (!full)
+		pcm->stats.resync_skips_busy++;
+	spin_unlock_irqrestore(&pcm->lock, flags);
+
+	if (busy && full) {
+		dev_warn_ratelimited(pcm->dev,
+				     "reprogram refused, a stream is running\n");
+		return -EBUSY;
+	}
+	if (busy) {
+		dev_warn_ratelimited(pcm->dev,
+				     "capture resync skipped, the peer stream runs; the restart proceeds without it\n");
+		return -EBUSY;
+	}
+
+	/*
+	 * trigger(STOP) leaves the ring armed on purpose, so the engine can
+	 * still own descriptors of a stopped direction. Cancel them before
+	 * CFG_VALID drops.
+	 */
+	for (dir = 0; dir < 2; dir++)
+		an7581_pcm_stream_quiesce(pcm, &pcm->stream[dir]);
+
+	if (full)
+		an7581_pcm_hw_init(pcm);
+	else
+		an7581_pcm_iface_resync(pcm);
+
+	spin_lock_irqsave(&pcm->lock, flags);
+	pcm->reprogramming = false;
+	if (!full)
+		pcm->stats.resync_runs++;
+	spin_unlock_irqrestore(&pcm->lock, flags);
+
+	return 0;
+}
+
+static int an7581_pcm_reprogram_locked(struct an7581_pcm *pcm)
+{
+	int ret;
+
+	lockdep_assert_held(&pcm->cfg_lock);
+
+	if (!pcm->cfg_dirty)
+		return 0;
+
+	ret = an7581_pcm_engine_reinit_locked(pcm, true);
+	if (ret)
+		return ret;
+
+	pcm->cfg_dirty = false;
+
+	return 0;
+}
 
 static void an7581_pcm_debugfs_remove(void *data)
 {
@@ -597,9 +897,10 @@ static const struct snd_pcm_hardware an7581_pcm_hardware = {
 				  SNDRV_PCM_INFO_BATCH |
 				  SNDRV_PCM_INFO_SYNC_APPLPTR,
 	.formats		= SNDRV_PCM_FMTBIT_S16_LE,
-	.rates			= SNDRV_PCM_RATE_8000,
-	.rate_min		= 8000,
-	.rate_max		= 8000,
+	.rates			= SNDRV_PCM_RATE_8000 |
+				  SNDRV_PCM_RATE_16000,
+	.rate_min		= AN7581_PCM_RATE_NB,
+	.rate_max		= AN7581_PCM_RATE_WB,
 	.channels_min		= 1,
 	.channels_max		= 2,
 	.periods_min		= 2,
@@ -611,6 +912,31 @@ static const struct snd_pcm_hardware an7581_pcm_hardware = {
 				  2 * AN7581_PCM_MAX_CHANNELS,
 	.fifo_size		= 0,
 };
+
+/*
+ * At 16 kHz one ALSA period splits into two engine sample streams, so an odd
+ * period has no whole descriptor sample count. Once the rate is fixed at
+ * 16 kHz, keep the ends of the period interval even, the way the core's own
+ * step constraint does.
+ */
+static int an7581_pcm_rule_wb_period(struct snd_pcm_hw_params *params,
+				     struct snd_pcm_hw_rule *rule)
+{
+	struct snd_interval *period = hw_param_interval(params, rule->var);
+	const struct snd_interval *rate;
+	struct snd_interval t;
+
+	rate = hw_param_interval_c(params, SNDRV_PCM_HW_PARAM_RATE);
+	if (rate->min < AN7581_PCM_RATE_WB)
+		return 0;
+
+	snd_interval_any(&t);
+	t.min = round_up(period->min + period->openmin, 2);
+	t.max = round_down(period->max - period->openmax, 2);
+	t.integer = 1;
+
+	return snd_interval_refine(period, &t);
+}
 
 static int an7581_pcm_open(struct snd_soc_component *component,
 			   struct snd_pcm_substream *substream)
@@ -628,8 +954,35 @@ static int an7581_pcm_open(struct snd_soc_component *component,
 	if (ret < 0)
 		return ret;
 
+	ret = snd_pcm_hw_rule_add(substream->runtime, 0,
+				  SNDRV_PCM_HW_PARAM_PERIOD_SIZE,
+				  an7581_pcm_rule_wb_period, NULL,
+				  SNDRV_PCM_HW_PARAM_RATE, -1);
+	if (ret < 0)
+		return ret;
+
 	stream = an7581_pcm_substream_get(pcm, substream);
 	stream->substream = substream;
+
+	return 0;
+}
+
+static int an7581_pcm_close(struct snd_soc_component *component,
+			    struct snd_pcm_substream *substream)
+{
+	struct an7581_pcm *pcm = snd_soc_component_get_drvdata(component);
+	struct an7581_pcm_stream *stream;
+	unsigned long flags;
+
+	stream = an7581_pcm_substream_get(pcm, substream);
+	an7581_pcm_stream_force_idle(pcm, stream, substream->stream);
+	an7581_pcm_stream_quiesce(pcm, stream);
+
+	spin_lock_irqsave(&pcm->lock, flags);
+	stream->substream = NULL;
+	stream->channels = 0;
+	stream->rate = 0;
+	spin_unlock_irqrestore(&pcm->lock, flags);
 
 	return 0;
 }
@@ -639,26 +992,70 @@ static int an7581_pcm_hw_params(struct snd_soc_component *component,
 				struct snd_pcm_hw_params *params)
 {
 	struct an7581_pcm *pcm = snd_soc_component_get_drvdata(component);
+	unsigned int channels = params_channels(params);
+	unsigned int rate = params_rate(params);
+	unsigned int period_frames = params_period_size(params);
+	unsigned int dma_channels = channels;
+	unsigned int desc_frames = period_frames;
 	struct an7581_pcm_stream *stream, *other;
+	unsigned long flags;
+	bool conflict;
+	int ret;
 
 	stream = an7581_pcm_substream_get(pcm, substream);
 	other = &pcm->stream[1 - substream->stream];
 
+	if (rate == AN7581_PCM_RATE_WB && period_frames % 2) {
+		dev_err(pcm->dev, "16 kHz needs an even period, got %u\n",
+			period_frames);
+		return -EINVAL;
+	}
+
+	/* a wideband line spends two engine channels on one ALSA channel */
+	if (rate == AN7581_PCM_RATE_WB) {
+		dma_channels = 2 * channels;
+		desc_frames = period_frames / 2;
+	}
+
+	mutex_lock(&pcm->cfg_lock);
+
 	/*
-	 * DCHENR (channel enable) is a single register shared by both DMA
-	 * directions, so they must agree on the channel count. The per-
-	 * direction buffer/period sizes are independent (separate descriptor
-	 * rings), and CHBFOSR only matters for multi-channel de-interleaving.
+	 * DCHENR (channel enable), CHBFOSR (channel stride) and the slot map
+	 * are single registers that both DMA directions share, so the two
+	 * directions must agree on the channel count, the line rate and the
+	 * period size. The mutex covers the check, the latch and the
+	 * reprogram, so two first calls cannot both read an unconfigured peer
+	 * and then apply different geometries.
 	 */
-	if (other->channels && other->channels != params_channels(params))
-		return -EBUSY;
+	spin_lock_irqsave(&pcm->lock, flags);
+	conflict = other->channels &&
+		   (other->channels != channels || other->rate != rate ||
+		    other->period_frames != period_frames);
+	spin_unlock_irqrestore(&pcm->lock, flags);
+	if (conflict) {
+		ret = -EBUSY;
+		goto out;
+	}
 
-	stream->channels = params_channels(params);
+	an7581_pcm_cfg_update(pcm, rate, desc_frames * 2,
+			      (1 << dma_channels) - 1);
+	ret = an7581_pcm_reprogram_locked(pcm);
+	if (ret)
+		goto out;
+
+	spin_lock_irqsave(&pcm->lock, flags);
+	stream->channels = channels;
+	stream->rate = rate;
+	stream->dma_channels = dma_channels;
 	stream->periods = params_periods(params);
-	stream->period_frames = params_period_size(params);
-	stream->chan_bytes = params_buffer_bytes(params) / stream->channels;
+	stream->period_frames = period_frames;
+	stream->desc_frames = desc_frames;
+	stream->chan_bytes = params_buffer_bytes(params) / channels;
+	spin_unlock_irqrestore(&pcm->lock, flags);
+out:
+	mutex_unlock(&pcm->cfg_lock);
 
-	return 0;
+	return ret;
 }
 
 static int an7581_pcm_hw_free(struct snd_soc_component *component,
@@ -666,10 +1063,16 @@ static int an7581_pcm_hw_free(struct snd_soc_component *component,
 {
 	struct an7581_pcm *pcm = snd_soc_component_get_drvdata(component);
 	struct an7581_pcm_stream *stream;
+	unsigned long flags;
 
 	stream = an7581_pcm_substream_get(pcm, substream);
+	an7581_pcm_stream_force_idle(pcm, stream, substream->stream);
 	an7581_pcm_stream_quiesce(pcm, stream);
+
+	spin_lock_irqsave(&pcm->lock, flags);
 	stream->channels = 0;
+	stream->rate = 0;
+	spin_unlock_irqrestore(&pcm->lock, flags);
 
 	return 0;
 }
@@ -681,8 +1084,38 @@ static int an7581_pcm_prepare(struct snd_soc_component *component,
 	struct an7581_pcm_stream *stream;
 
 	stream = an7581_pcm_substream_get(pcm, substream);
-	if (!stream->running)
-		an7581_pcm_stream_quiesce(pcm, stream);
+	if (stream->running)
+		return 0;
+
+	an7581_pcm_stream_quiesce(pcm, stream);
+
+	/*
+	 * Only the capture direction disables the receive DMA, so only a
+	 * capture restart can leave the engine one byte late. The device
+	 * advertises neither PAUSE nor RESUME, so the core rejects every
+	 * trigger START that this callback does not precede.
+	 *
+	 * A dirty configuration means pcm->cfg does not describe the running
+	 * registers, so the full reprogram applies it. The partial resync
+	 * rewrites the slot map and CHBFOSR from pcm->cfg and therefore runs
+	 * only when the two agree.
+	 *
+	 * Both forms need both directions idle, because CFG_VALID cannot drop
+	 * under a live stream. An unlinked capture start beside live playback
+	 * proceeds without the resync and keeps the behaviour the driver had
+	 * before. The stats file counts that case as resync_skips_busy.
+	 * Production udsp links the two streams, so its prepares always find
+	 * both directions idle and always resync.
+	 */
+	if (substream->stream != SNDRV_PCM_STREAM_CAPTURE)
+		return 0;
+
+	mutex_lock(&pcm->cfg_lock);
+	if (pcm->cfg_dirty)
+		an7581_pcm_reprogram_locked(pcm);
+	else
+		an7581_pcm_engine_reinit_locked(pcm, false);
+	mutex_unlock(&pcm->cfg_lock);
 
 	return 0;
 }
@@ -702,6 +1135,10 @@ static int an7581_pcm_trigger(struct snd_soc_component *component,
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+		if (pcm->reprogramming) {
+			ret = -EBUSY;
+			break;
+		}
 		an7581_pcm_stream_start(pcm, stream, substream->stream);
 		break;
 	case SNDRV_PCM_TRIGGER_STOP:
@@ -766,6 +1203,7 @@ static int an7581_pcm_construct(struct snd_soc_component *component,
 static const struct snd_soc_component_driver an7581_pcm_component = {
 	.name		= "an7581-pcm",
 	.open		= an7581_pcm_open,
+	.close		= an7581_pcm_close,
 	.hw_params	= an7581_pcm_hw_params,
 	.hw_free	= an7581_pcm_hw_free,
 	.prepare	= an7581_pcm_prepare,
@@ -782,7 +1220,8 @@ static struct snd_soc_dai_driver an7581_pcm_dais[] = {
 			.stream_name	= "an7581-pcm-playback",
 			.channels_min	= 1,
 			.channels_max	= 2,
-			.rates		= SNDRV_PCM_RATE_8000,
+			.rates		= SNDRV_PCM_RATE_8000 |
+					  SNDRV_PCM_RATE_16000,
 			.formats	= SNDRV_PCM_FMTBIT_S16_LE,
 		},
 	}, {
@@ -791,16 +1230,66 @@ static struct snd_soc_dai_driver an7581_pcm_dais[] = {
 			.stream_name	= "an7581-pcm-capture",
 			.channels_min	= 1,
 			.channels_max	= 2,
-			.rates		= SNDRV_PCM_RATE_8000,
+			.rates		= SNDRV_PCM_RATE_8000 |
+					  SNDRV_PCM_RATE_16000,
 			.formats	= SNDRV_PCM_FMTBIT_S16_LE,
 		},
 	},
 };
 
+/*
+ * The frame bit every engine channel owns. At 8 kHz channel k owns the k-th
+ * 16-bit slot and channels 16 to 31, which the driver never enables, keep
+ * their reset values. At 16 kHz line k owns two channels: the SLIC keeps the
+ * narrowband timeslot of the line at bit k*16 and sends the second sample of
+ * the pair half a frame later, so channel 2k owns bit k*16 and channel 2k+1
+ * owns bit k*16 + 128. Channels 16 to 31 then park past the frame, because
+ * their reset values are 8-bit slots in the half of the frame the pairs use.
+ */
+static unsigned int an7581_pcm_start_table(unsigned int rate, u16 *start)
+{
+	unsigned int k;
+
+	if (rate != AN7581_PCM_RATE_WB) {
+		for (k = 0; k < AN7581_PCM_SLOTS; k++)
+			start[k] = k * 16 + AN7581_PCM_SLOT_OFF;
+
+		return AN7581_PCM_SLOTS;
+	}
+
+	for (k = 0; k < AN7581_PCM_SLOTS / 2; k++) {
+		start[2 * k] = k * 16 + AN7581_PCM_SLOT_OFF;
+		start[2 * k + 1] = k * 16 + AN7581_PCM_SLOT_OFF +
+				   AN7581_PCM_WB_PAIR_OFF;
+	}
+
+	for (k = AN7581_PCM_SLOTS; k < AN7581_PCM_HW_SLOTS; k++)
+		start[k] = k * 16 + AN7581_PCM_SLOT_OFF;
+
+	return AN7581_PCM_HW_SLOTS;
+}
+
+static void an7581_pcm_slots_program(struct an7581_pcm *pcm)
+{
+	u16 start[AN7581_PCM_HW_SLOTS];
+	unsigned int slots;
+	unsigned int i;
+
+	slots = an7581_pcm_start_table(pcm->cfg.rate, start);
+
+	for (i = 0; i < slots / 2; i++) {
+		u32 slot = TSCR_SLOT0_BW16 | TSCR_SLOT1_BW16 |
+			   FIELD_PREP(TSCR_SLOT0_START, start[2 * i]) |
+			   FIELD_PREP(TSCR_SLOT1_START, start[2 * i + 1]);
+
+		writel(slot, pcm->base + REG_PTTSCR(i));
+		writel(slot, pcm->base + REG_PRTSCR(i));
+	}
+}
+
 static void an7581_pcm_hw_init(struct an7581_pcm *pcm)
 {
 	u32 val;
-	int i;
 
 	writel(0, pcm->base + REG_IMR);
 	writel(0, pcm->base + REG_TRDCR);
@@ -817,16 +1306,7 @@ static void an7581_pcm_hw_init(struct an7581_pcm *pcm)
 	      FIELD_PREP(PICR_BIT_CLK, PICR_BIT_CLK_2048K);
 	writel(val, pcm->base + REG_PICR);
 
-	for (i = 0; i < AN7581_PCM_SLOTS / 2; i++) {
-		u32 slot = TSCR_SLOT0_BW16 | TSCR_SLOT1_BW16 |
-			   FIELD_PREP(TSCR_SLOT0_START,
-				      (2 * i) * 16 + AN7581_PCM_SLOT_OFF) |
-			   FIELD_PREP(TSCR_SLOT1_START,
-				      (2 * i + 1) * 16 + AN7581_PCM_SLOT_OFF);
-
-		writel(slot, pcm->base + REG_PTTSCR(i));
-		writel(slot, pcm->base + REG_PRTSCR(i));
-	}
+	an7581_pcm_slots_program(pcm);
 
 	writel(an7581_pcm_dma_addr(pcm->desc_dma), pcm->base + REG_TDRBAR);
 	writel(an7581_pcm_dma_addr(pcm->desc_dma +
@@ -835,8 +1315,14 @@ static void an7581_pcm_hw_init(struct an7581_pcm *pcm)
 	       pcm->base + REG_RDRBAR);
 	writel((AN7581_PCM_DESC_STRIDE_DW << 4) | AN7581_PCM_NUM_DESC,
 	       pcm->base + REG_TRDRSR);
-	writel(0, pcm->base + REG_CHBFOSR);
-	writel(1, pcm->base + REG_DCHENR);
+	/*
+	 * aos writes the channel stride and the channel enable inside the
+	 * cfg_valid-low window (descInit, pcmConfigSetup) and the trigger path
+	 * cannot: CHBFOSR is one register for both directions, so the
+	 * direction that started last used to overwrite the other's stride.
+	 */
+	writel(pcm->cfg.chbfosr, pcm->base + REG_CHBFOSR);
+	an7581_pcm_dchenr_set(pcm, pcm->cfg.dchenr);
 
 	usleep_range(1000, 2000);
 	writel(val | PICR_CFG_VALID, pcm->base + REG_PICR);
@@ -865,6 +1351,9 @@ static int an7581_pcm_probe(struct platform_device *pdev)
 
 	pcm->dev = dev;
 	spin_lock_init(&pcm->lock);
+	mutex_init(&pcm->cfg_lock);
+	pcm->cfg.rate = AN7581_PCM_RATE_NB;
+	pcm->cfg.dchenr = 1;
 	platform_set_drvdata(pdev, pcm);
 
 	pcm->base = devm_platform_ioremap_resource(pdev, 0);
