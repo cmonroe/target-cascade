@@ -1,52 +1,110 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Tue, 01 Sep 2026 09:28:00 -0700
+Subject: [PATCH] ASoC: mediatek: mt7986: set the ETDM slots and clock divider
+
+The SDG voice boards drive a Silicon Labs SLIC on ETDM5 instead of an
+audio codec. The SLIC frame carries four 16-bit slots. At 16 kHz the
+wire frame sync must stay at 8 kHz. Two register fields did not follow
+that need.
+
+Slot count: mt7986_si3218x_init() programs four slots into
+ETDM_OUT5_CON0. mtk_dai_etdm_config() derived the same field from
+params_channels(), and the DAI limits a stream to two channels. A
+stream then reprogrammed the bus to two slots. Set the field to the
+four slots of the SLIC frame. Drop get_etdm_ch_fixup(); no caller
+remains.
+
+Clock divider: the SLIC packs one 16 kHz channel into two 16-bit
+samples of one 8 kHz PCM frame. The AFE must move 16000 frames per
+second while bit 12 of ETDM_OUT5_CON5 (ETDM_CLK_DIV) divides the wire
+frame sync to 8 kHz. The vendor code wrote the bit for every rate.
+Drive the field from params_rate() in the playback branch of
+mtk_dai_etdm_config(), beside the other ETDM_OUT5 rate fields. That
+branch runs on every hw_params for both directions, and no other site
+writes the field. Without the clear, a 16 kHz close would leave the
+divider set for the next 8 kHz open. A measurement on the SDG-8732v
+confirmed the divided frame sync at 16 kHz.
+
+The DAI sets symmetric_rate, so soc_pcm_params_symmetry() refuses a
+second direction at a different rate with -EINVAL, and
+soc_pcm_hw_clean() drops the stored rate only when the DAI active
+count is one. A peer with hw_params therefore keeps the rate pinned.
+At 8000 the field takes 0, its reset value; regmap drops the unchanged
+write, so the 8 kHz register sequence does not change.
+
+Known limitation: mt7986_si3218x_init() enables both ETDM directions
+at probe, and the OUT5 setup fields land before this field. A first
+change from 8 kHz to 16 kHz therefore shows a brief mixed geometry on
+an enabled bus. The vendor flow already writes its configuration under
+ETDM_EN; this change keeps that order.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ sound/soc/mediatek/mt7986/mt7986-dai-etdm.c |   34 ++++++++----------
+ 1 file changed, 16 insertions(+), 18 deletions(-)
+
 --- a/sound/soc/mediatek/mt7986/mt7986-dai-etdm.c
 +++ b/sound/soc/mediatek/mt7986/mt7986-dai-etdm.c
-@@ -146,6 +146,7 @@ static void mtk_dai_etdm_shutdown(struct
+@@ -146,20 +146,6 @@ static void mtk_dai_etdm_shutdown(struct
  	clk_bulk_disable_unprepare(afe_priv->num_clks, afe_priv->clks);
  }
  
-+#if 0 // D2 MOD
- static unsigned int get_etdm_ch_fixup(unsigned int channels)
- {
- 	if (channels > 16)
-@@ -159,6 +160,7 @@ static unsigned int get_etdm_ch_fixup(un
- 	else
- 		return 2;
- }
-+#endif
- 
+-static unsigned int get_etdm_ch_fixup(unsigned int channels)
+-{
+-	if (channels > 16)
+-		return 24;
+-	else if (channels > 8)
+-		return 16;
+-	else if (channels > 4)
+-		return 8;
+-	else if (channels > 2)
+-		return 4;
+-	else
+-		return 2;
+-}
+-
  static int mtk_dai_etdm_config(struct mtk_base_afe *afe,
  			       struct snd_pcm_hw_params *params,
-@@ -170,7 +172,9 @@ static int mtk_dai_etdm_config(struct mt
+ 			       struct snd_soc_dai *dai,
+@@ -170,7 +156,6 @@ static int mtk_dai_etdm_config(struct mt
  	unsigned int rate = params_rate(params);
  	unsigned int etdm_rate = mt7986_etdm_rate_transform(afe->dev, rate);
  	unsigned int afe_rate = mt7986_afe_rate_transform(afe->dev, rate);
-+#if 0 // D2 MOD
- 	unsigned int channels = params_channels(params);
-+#endif
+-	unsigned int channels = params_channels(params);
  	unsigned int bit_width = params_width(params);
  	unsigned int wlen = get_etdm_wlen(bit_width);
  	unsigned int val = 0;
-@@ -187,7 +191,11 @@ static int mtk_dai_etdm_config(struct mt
+@@ -187,7 +172,12 @@ static int mtk_dai_etdm_config(struct mt
  	mask |= ETDM_FMT_MASK;
  	val |= FIELD_PREP(ETDM_FMT_MASK, etdm_data->format);
  	mask |= ETDM_CH_NUM_MASK;
-+#if 0 // D2 MOD
- 	val |= FIELD_PREP(ETDM_CH_NUM_MASK, get_etdm_ch_fixup(channels) - 1);
-+#else
-+	val |= FIELD_PREP(ETDM_CH_NUM_MASK, 3);
-+#endif
+-	val |= FIELD_PREP(ETDM_CH_NUM_MASK, get_etdm_ch_fixup(channels) - 1);
++	/*
++	 * The ETDM frame always carries the four SLIC time slots that
++	 * mt7986_si3218x_init() programs into ETDM_OUT5_CON0, so the
++	 * slot count does not follow the ALSA channel count.
++	 */
++	val |= FIELD_PREP(ETDM_CH_NUM_MASK, 4 - 1);
  	mask |= RELATCH_SRC_MASK;
  	val |= FIELD_PREP(RELATCH_SRC_MASK, APLL_CLK);
  
-@@ -204,9 +212,11 @@ static int mtk_dai_etdm_config(struct mt
+@@ -204,9 +194,17 @@ static int mtk_dai_etdm_config(struct mt
  		regmap_update_bits(afe->regmap, ETDM_OUT5_CON4,
  				   OUT_SEL_FS_MASK, OUT_SEL_FS(etdm_rate));
  
-+#if 0 /* D2 MOD: Diable the 16kHz wideband PCM, use the default 8kHz narrowband */
- 		/* set ETDM_OUT5_CON5 */
+-		/* set ETDM_OUT5_CON5 */
++		/*
++		 * The SLIC packs one 16 kHz channel into two 16-bit samples
++		 * of a single 8 kHz PCM frame. The wire frame sync must stay
++		 * at 8 kHz while the AFE moves 16000 frames per second.
++		 * Clear the field at every other rate, because no other site
++		 * in the tree writes it. A 16 kHz close would otherwise leave
++		 * the divider on for the next 8 kHz open.
++		 */
  		regmap_update_bits(afe->regmap, ETDM_OUT5_CON5,
- 				   ETDM_CLK_DIV_MASK, ETDM_CLK_DIV);
-+#endif
+-				   ETDM_CLK_DIV_MASK, ETDM_CLK_DIV);
++				   ETDM_CLK_DIV_MASK,
++				   rate == 16000 ? ETDM_CLK_DIV : 0);
  		break;
  	case SNDRV_PCM_STREAM_CAPTURE:
  		/* set ETDM_IN5_CON0 */

@@ -1,17 +1,40 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Tue, 01 Sep 2026 09:28:00 -0700
+Subject: [PATCH] ASoC: wm8960: skip the reset on boards without the codec
+
+The SDG-8712v and SDG-8732v device trees place a wlf,wm8960 node on
+i2c0, but the boards carry no WM8960. Voice runs over a SLIC, and the
+mt7986-wm8960-sound machine node stays disabled. The driver still
+probes, because the i2c node is present.
+
+wm8960_i2c_probe() already tolerates a missing part in one place: it
+treats a successful register read as proof that the part is not a
+WM8960. A board with no part at address 0x1a passes that check,
+because i2c-mt65xx returns -ENXIO on an unacknowledged transfer. The
+wm8960_reset() write then fails for the same reason, and probe returns
+the error.
+
+Drop the reset write. The regmap holds wm8960_reg_defaults in a
+REGCACHE_MAPLE cache, so the register view of the driver does not
+change.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ sound/soc/codecs/wm8960.c |    6 ------
+ 1 file changed, 6 deletions(-)
+
 --- a/sound/soc/codecs/wm8960.c
 +++ b/sound/soc/codecs/wm8960.c
-@@ -1485,11 +1485,14 @@ static int wm8960_i2c_probe(struct i2c_c
+@@ -1485,12 +1485,6 @@ static int wm8960_i2c_probe(struct i2c_c
  		goto bulk_disable;
  	}
  
-+	/* D2 MOD: Remove below code due to no real wm8960 codec in the EVB board */
-+#if 0
- 	ret = wm8960_reset(wm8960->regmap);
- 	if (ret != 0) {
- 		dev_err(&i2c->dev, "Failed to issue reset\n");
- 		goto bulk_disable;
- 	}
-+#endif
- 
+-	ret = wm8960_reset(wm8960->regmap);
+-	if (ret != 0) {
+-		dev_err(&i2c->dev, "Failed to issue reset\n");
+-		goto bulk_disable;
+-	}
+-
  	if (wm8960->pdata.shared_lrclk) {
  		ret = regmap_update_bits(wm8960->regmap, WM8960_ADDCTL2,
+ 					 0x4, 0x4);

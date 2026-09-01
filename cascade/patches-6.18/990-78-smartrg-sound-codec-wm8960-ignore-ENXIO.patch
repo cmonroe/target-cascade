@@ -1,10 +1,35 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Tue, 01 Sep 2026 09:28:00 -0700
+Subject: [PATCH] ASoC: soc-utils: do not log -ENXIO in snd_soc_ret()
+
+The SDG voice boards place a wlf,wm8960 node on a bus with no WM8960.
+Every codec register access then fails with -ENXIO, because i2c-mt65xx
+returns that error on an unacknowledged transfer. snd_soc_ret() prints
+an "ASoC error" line for every errno outside its allow list, so card
+bring-up fills the log.
+
+Add -ENXIO to the allow list. The function only suppresses the message
+and returns the same value, so no caller changes behaviour. These
+boards use only the PCM path of the codec, not the control path.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ sound/soc/soc-utils.c |    7 +++++++
+ 1 file changed, 7 insertions(+)
+
 --- a/sound/soc/soc-utils.c
 +++ b/sound/soc/soc-utils.c
-@@ -29,6 +29,7 @@ int snd_soc_ret(const struct device *dev
+@@ -29,6 +29,13 @@ int snd_soc_ret(const struct device *dev
  	case -EPROBE_DEFER:
  	case -ENOTSUPP:
  	case -EOPNOTSUPP:
-+	case -ENXIO: /* ADTN/D2 patch: ignore device/address errors. Only the pcm part, not the control part, is used */
++	/*
++	 * i2c-mt65xx returns -ENXIO when a transfer gets no
++	 * acknowledgement. A board that names a codec it does not
++	 * carry then logs one ASoC error for every access. Suppress
++	 * the message only; snd_soc_ret() returns the error as before.
++	 */
++	case -ENXIO:
  		break;
  	default:
  		va_start(args, fmt);

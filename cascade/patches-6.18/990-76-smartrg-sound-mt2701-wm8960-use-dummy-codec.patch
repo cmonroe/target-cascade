@@ -1,3 +1,29 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Tue, 01 Sep 2026 09:28:00 -0700
+Subject: [PATCH] ASoC: mediatek: mt2701: bind the dummy SLIC codec
+
+The 834-v6 and 854-v6 boards use the mt2701-wm8960 machine driver to
+reach the MT2701 AFE, but they carry no WM8960. Their sound nodes
+point mediatek,audio-codec at a d2,slic-dummy-codec node.
+
+Bind slic-dummy-aif in place of wm8960-hifi. Select
+SND_SOC_SLIC_DUMMY in place of SND_SOC_WM8960, so Kconfig builds the
+dummy codec with the machine driver.
+
+Drop the audio-routing parse. Neither board device tree carries an
+audio-routing property, and snd_soc_of_parse_audio_routing() returns
+-EINVAL when the property is absent, so the parse aborted probe. The
+put_codec_node label goes with the only goto that reached it. Keep the
+of_node_put(codec_node) call on the fallthrough path; an earlier
+revision dropped it with the label and leaked one node reference per
+probe.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ sound/soc/mediatek/Kconfig                |    2 +-
+ sound/soc/mediatek/mt2701/mt2701-wm8960.c |    9 +--------
+ 2 files changed, 2 insertions(+), 9 deletions(-)
+
 --- a/sound/soc/mediatek/Kconfig
 +++ b/sound/soc/mediatek/Kconfig
 @@ -49,7 +49,7 @@ config SND_SOC_MT2701_CS42448
@@ -20,27 +46,22 @@
  	DAILINK_COMP_ARRAY(COMP_EMPTY()));
  
  static struct snd_soc_dai_link mt2701_wm8960_dai_links[] = {
-@@ -136,19 +136,22 @@ static int mt2701_wm8960_machine_probe(s
+@@ -136,18 +136,11 @@ static int mt2701_wm8960_machine_probe(s
  		dai_link->codecs->of_node = codec_node;
  	}
  
-+#if 0 // D2 Mod
- 	ret = snd_soc_of_parse_audio_routing(card, "audio-routing");
- 	if (ret) {
- 		dev_err(&pdev->dev, "failed to parse audio-routing: %d\n", ret);
- 		goto put_codec_node;
- 	}
+-	ret = snd_soc_of_parse_audio_routing(card, "audio-routing");
+-	if (ret) {
+-		dev_err(&pdev->dev, "failed to parse audio-routing: %d\n", ret);
+-		goto put_codec_node;
+-	}
 -
-+#endif
  	ret = devm_snd_soc_register_card(&pdev->dev, card);
  	if (ret)
  		dev_err(&pdev->dev, "%s snd_soc_register_card fail %d\n",
  			__func__, ret);
  
-+#if 0 // D2 Mod
- put_codec_node:
+-put_codec_node:
  	of_node_put(codec_node);
-+#endif
  put_platform_node:
  	of_node_put(platform_node);
- 	return ret;

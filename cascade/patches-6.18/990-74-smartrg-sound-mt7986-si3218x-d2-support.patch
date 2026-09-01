@@ -1,3 +1,37 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Tue, 01 Sep 2026 09:28:00 -0700
+Subject: [PATCH] ASoC: mediatek: mt7986: adapt the si3218x machine driver
+
+The vendor mt7986-si3218x machine driver targets an evaluation board
+with a Proslic SPI codec and an external ETDM loopback. The SDG voice
+boards carry a Silicon Labs SLIC and need only the PCM data path.
+
+Bind the dummy SLIC codec. The boards need no ASoC codec controls, so
+the codec dai link points at slic-dummy-aif.
+
+Park the ETDM at the 8 kHz frame sync the SLIC expects. These probe
+values hold only until the first hw_params, when mtk_dai_etdm_config()
+rewrites the ETDM and AFE rate fields from params_rate().
+
+Drop the external loopback and the divider write. The SDG boards wire
+the SLIC to both ETDM directions, so the OUT_SEL loopback in
+ETDM_4_7_COWORK_CON0 has no use, and mtk_dai_etdm_config() now drives
+the ETDM_OUT5_CON5 divider from the rate.
+
+Power up the audio SRAM: write zero to the undocumented register at
+0x10003050 before the first transfer. Treat a failed ioremap() as non
+fatal and let the card register.
+
+Update the dai link flags for the current ASoC API. playback_only and
+capture_only replace dpcm_playback and dpcm_capture on the front ends,
+the back end drops both flags, and SND_SOC_DAIFMT_CBC_CFC replaces the
+removed SND_SOC_DAIFMT_CBS_CFS.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ sound/soc/mediatek/mt7986/mt7986-si3218x.c |   47 ++++++++++++-------
+ 1 file changed, 31 insertions(+), 16 deletions(-)
+
 --- a/sound/soc/mediatek/mt7986/mt7986-si3218x.c
 +++ b/sound/soc/mediatek/mt7986/mt7986-si3218x.c
 @@ -10,6 +10,7 @@
@@ -25,71 +59,55 @@
  
  	/* enable clk */
  	ret = clk_bulk_prepare_enable(afe_priv->num_clks, afe_priv->clks);
-@@ -103,7 +107,7 @@ static int mt7986_si3218x_init(struct sn
- 	/* set ETDM_IN5_CON2 */
+@@ -104,15 +108,21 @@ static int mt7986_si3218x_init(struct sn
  	regmap_update_bits(afe->regmap, ETDM_IN5_CON2, IN_CLK_SRC_MASK,
  			   IN_CLK_SRC(APLL_CLK));
--
-+#if 0 //D2 MOD
+ 
++	/*
++	 * mtk_dai_etdm_config() rewrites the ETDM and AFE rate fields from
++	 * params_rate() on every hw_params. These probe values only park
++	 * the idle bus at the 8 kHz frame sync the SLIC expects.
++	 */
++
  	/* set ETDM_IN5_CON3 */
  	regmap_update_bits(afe->regmap, ETDM_IN5_CON3, IN_SEL_FS_MASK,
- 			   IN_SEL_FS(ETDM_FS_16K));
-@@ -113,7 +117,17 @@ static int mt7986_si3218x_init(struct sn
- 			   IN_CLK_INV);
- 	regmap_update_bits(afe->regmap, ETDM_IN5_CON4, IN_RELATCH_MASK,
- 			   IN_RELATCH(AFE_FS_16K));
-+#else
-+	/* set ETDM_IN5_CON3 */
-+	regmap_update_bits(afe->regmap, ETDM_IN5_CON3, IN_SEL_FS_MASK,
+-			   IN_SEL_FS(ETDM_FS_16K));
 +			   IN_SEL_FS(ETDM_FS_8K));
  
-+	/* set ETDM_IN5_CON4 */
-+	regmap_update_bits(afe->regmap, ETDM_IN5_CON4, IN_CLK_INV_MASK,
-+			   IN_CLK_INV);
-+	regmap_update_bits(afe->regmap, ETDM_IN5_CON4, IN_RELATCH_MASK,
+ 	/* set ETDM_IN5_CON4 */
+ 	regmap_update_bits(afe->regmap, ETDM_IN5_CON4, IN_CLK_INV_MASK,
+ 			   IN_CLK_INV);
+ 	regmap_update_bits(afe->regmap, ETDM_IN5_CON4, IN_RELATCH_MASK,
+-			   IN_RELATCH(AFE_FS_16K));
 +			   IN_RELATCH(AFE_FS_8K));
-+#endif
+ 
  	/* set ETDM_OUT5_CON0 */
  	regmap_update_bits(afe->regmap, ETDM_OUT5_CON0, ETDM_FMT_MASK,
- 			   FIELD_PREP(ETDM_FMT_MASK, PCMA));
-@@ -125,7 +139,7 @@ static int mt7986_si3218x_init(struct sn
- 			   FIELD_PREP(ETDM_CH_NUM_MASK, 4 - 1));
- 	regmap_update_bits(afe->regmap, ETDM_OUT5_CON0, RELATCH_SRC_MASK,
- 			   FIELD_PREP(RELATCH_SRC_MASK, APLL_CLK));
--
-+#if 0 //D2 MOD
+@@ -128,21 +138,15 @@ static int mt7986_si3218x_init(struct sn
+ 
  	/* set ETDM_OUT5_CON4 */
  	regmap_update_bits(afe->regmap, ETDM_OUT5_CON4, OUT_SEL_FS_MASK,
- 			   OUT_SEL_FS(ETDM_FS_16K));
-@@ -133,23 +147,45 @@ static int mt7986_si3218x_init(struct sn
+-			   OUT_SEL_FS(ETDM_FS_16K));
++			   OUT_SEL_FS(ETDM_FS_8K));
+ 	regmap_update_bits(afe->regmap, ETDM_OUT5_CON4, OUT_CLK_SRC_MASK,
  			   OUT_CLK_SRC(APLL_CLK));
  	regmap_update_bits(afe->regmap, ETDM_OUT5_CON4, OUT_RELATCH_MASK,
- 			   OUT_RELATCH(AFE_FS_16K));
--
-+#else
-+	/* set ETDM_OUT5_CON4 */
-+	regmap_update_bits(afe->regmap, ETDM_OUT5_CON4, OUT_SEL_FS_MASK,
-+			   OUT_SEL_FS(ETDM_FS_8K));
-+	regmap_update_bits(afe->regmap, ETDM_OUT5_CON4, OUT_CLK_SRC_MASK,
-+			   OUT_CLK_SRC(APLL_CLK));
-+	regmap_update_bits(afe->regmap, ETDM_OUT5_CON4, OUT_RELATCH_MASK,
+-			   OUT_RELATCH(AFE_FS_16K));
 +			   OUT_RELATCH(AFE_FS_8K));
-+#endif
+ 
  	/* set ETDM_OUT5_CON5 */
  	regmap_update_bits(afe->regmap, ETDM_OUT5_CON5, OUT_CLK_INV_MASK,
  			   OUT_CLK_INV);
-+#if 0 //D2 MOD
- 	regmap_update_bits(afe->regmap, ETDM_OUT5_CON5, ETDM_CLK_DIV_MASK,
- 			   ETDM_CLK_DIV);
- 
- 	/* set external loopback */
- 	regmap_update_bits(afe->regmap, ETDM_4_7_COWORK_CON0, OUT_SEL_MASK,
- 			   OUT_SEL(ETDM_IN5));
+-	regmap_update_bits(afe->regmap, ETDM_OUT5_CON5, ETDM_CLK_DIV_MASK,
+-			   ETDM_CLK_DIV);
 -
-+#endif
+-	/* set external loopback */
+-	regmap_update_bits(afe->regmap, ETDM_4_7_COWORK_CON0, OUT_SEL_MASK,
+-			   OUT_SEL(ETDM_IN5));
+ 
  	/* enable ETDM */
  	regmap_update_bits(afe->regmap, ETDM_IN5_CON0, ETDM_EN_MASK,
- 			   ETDM_EN);
+@@ -150,6 +154,19 @@ static int mt7986_si3218x_init(struct sn
  	regmap_update_bits(afe->regmap, ETDM_OUT5_CON0, ETDM_EN_MASK,
  			   ETDM_EN);
  
@@ -109,7 +127,7 @@
  	return 0;
  }
  
-@@ -165,7 +201,7 @@ SND_SOC_DAILINK_DEFS(capture,
+@@ -165,7 +182,7 @@ SND_SOC_DAILINK_DEFS(capture,
  
  SND_SOC_DAILINK_DEFS(codec,
  	DAILINK_COMP_ARRAY(COMP_CPU("ETDM")),
@@ -118,7 +136,7 @@
  	DAILINK_COMP_ARRAY(COMP_EMPTY()));
  
  static struct snd_soc_dai_link mt7986_si3218x_dai_links[] = {
-@@ -176,7 +212,7 @@ static struct snd_soc_dai_link mt7986_si
+@@ -176,7 +193,7 @@ static struct snd_soc_dai_link mt7986_si
  		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
  			    SND_SOC_DPCM_TRIGGER_POST},
  		.dynamic = 1,
@@ -127,7 +145,7 @@
  		SND_SOC_DAILINK_REG(playback),
  	},
  	{
-@@ -185,7 +221,7 @@ static struct snd_soc_dai_link mt7986_si
+@@ -185,7 +202,7 @@ static struct snd_soc_dai_link mt7986_si
  		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
  			    SND_SOC_DPCM_TRIGGER_POST},
  		.dynamic = 1,
@@ -136,7 +154,7 @@
  		SND_SOC_DAILINK_REG(capture),
  	},
  	/* BE */
-@@ -194,10 +230,8 @@ static struct snd_soc_dai_link mt7986_si
+@@ -194,10 +211,8 @@ static struct snd_soc_dai_link mt7986_si
  		.no_pcm = 1,
  		.dai_fmt = SND_SOC_DAIFMT_DSP_A |
  			SND_SOC_DAIFMT_IB_NF |

@@ -1,3 +1,27 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Tue, 01 Sep 2026 09:28:00 -0700
+Subject: [PATCH] ASoC: mediatek: mt2701: adapt the AFE to voice streams
+
+The 834-v6 and 854-v6 boards move 8 kHz narrowband PCM through the
+MT2701 AFE. Two parts of the driver block that traffic.
+
+period_bytes_min was 1024 and periods_min was 4, which suits music
+playback. A 20 ms narrowband frame holds 320 bytes at 16-bit mono, so
+the floor forced a period at least three times longer than one voice
+frame. Drop the floor to 320 bytes, allow a two period ring, and scale
+period_bytes_max and buffer_bytes_max by the same factor.
+
+mt2701_afe_i2s_prepare() returned -EBUSY when the path was occupied.
+snd_pcm_prepare() can run again on a prepared stream, for example
+after an xrun. Only mt2701_afe_i2s_shutdown() clears occupied, so the
+second prepare failed and the stream never recovered. Report success
+and leave the running path alone.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ sound/soc/mediatek/mt2701/mt2701-afe-pcm.c |   16 +++++++++++-----
+ 1 file changed, 11 insertions(+), 5 deletions(-)
+
 --- a/sound/soc/mediatek/mt2701/mt2701-afe-pcm.c
 +++ b/sound/soc/mediatek/mt2701/mt2701-afe-pcm.c
 @@ -24,11 +24,11 @@ static const struct snd_pcm_hardware mt2
@@ -16,15 +40,19 @@
  	.fifo_size = 0,
  };
  
-@@ -240,8 +240,10 @@ static int mt2701_afe_i2s_prepare(struct
+@@ -240,8 +240,14 @@ static int mt2701_afe_i2s_prepare(struct
  
  	i2s_path = &afe_priv->i2s_path[i2s_num];
  
-+#if 1 /* D2 MOD, do not return -EBUSY even if the sream is occupied, or snd_pcm_recover() will failed. */
++	/*
++	 * snd_pcm_prepare() can run again on a stream that is already
++	 * prepared, for example when userspace recovers from an xrun.
++	 * occupied is cleared only in mt2701_afe_i2s_shutdown(), so a
++	 * repeat prepare must report success instead of -EBUSY.
++	 */
  	if (i2s_path->occupied[substream->stream])
 -		return -EBUSY;
 +		return 0;
-+#endif
  
  	ret = mt2701_mclk_configuration(afe, mode ? 1 : i2s_num);
  	if (ret)
