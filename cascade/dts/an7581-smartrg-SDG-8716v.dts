@@ -18,6 +18,8 @@
 
 	aliases {
 		serial0 = &uart1;
+		spi0 = &slic_spi;
+		spi1 = &snfi;
 		led-boot = &led_sys_green;
 		led-failsafe = &led_sys_blue;
 		led-running = &led_sys_white;
@@ -52,20 +54,72 @@
 		slic_reset {
 			gpio-export,name = "slic_reset";
 			/*
-			* Keep SLIC (Si32184) in reset by default. voip_loader
-			* releases it after slic3_silicon.ko is ready. Pairs
+			* Keep SLIC (Si32184) in reset by default. udsp
+			* releases it once the SLIC plug-in is ready. Pairs
 			* with the U-Boot gpio_direction_output(14, 0) so the
 			* pin never floats from power-on through Linux boot.
 			*/
 			gpio-export,output = <0>;
 			gpios = <&en7581_pinctrl 14 GPIO_ACTIVE_HIGH>;
 		};
+
+		slic_interrupt {
+			gpio-export,name = "slic_interrupt";
+			gpio-export,direction_may_change;
+			gpios = <&en7581_pinctrl 13 GPIO_ACTIVE_HIGH>;
+		};
 	};
 
 	voip_pcm: pcm@1fbd0000 {
-		compatible = "airoha,airoha-pcm";
-		reg = <0x0 0x1fbd0000 0x0 0x4fff>;
+		compatible = "airoha,en7581-pcm";
+		reg = <0x0 0x1fbd0000 0x0 0x1000>;
 		interrupts = <GIC_SPI 27 IRQ_TYPE_LEVEL_HIGH>;
+		resets = <&scuclk EN7581_PCM1_RST>;
+		airoha,chip-scu = <&chip_scu>;
+		airoha,np-scu = <&scuclk>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&pcm1_pins>;
+	};
+
+	/*
+	 * The EN7581 SPIWP engine at 0x1fbd1000 pulses chip-select per byte,
+	 * which breaks the ProSLIC MPI framing (the control+address bytes must
+	 * be clocked under one CS). Bit-bang the SLIC control bus instead so CS
+	 * is held across each transfer. SLIC SPI pads (schematic): gpio5 SCLK,
+	 * gpio6 CS0, gpio7 MOSI, gpio8 MISO = en7581_pinctrl lines 5/6/7/8.
+	 */
+	slic_spi: spi {
+		compatible = "spi-gpio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		sck-gpios = <&en7581_pinctrl 5 GPIO_ACTIVE_HIGH>;
+		mosi-gpios = <&en7581_pinctrl 7 GPIO_ACTIVE_HIGH>;
+		miso-gpios = <&en7581_pinctrl 8 GPIO_ACTIVE_HIGH>;
+		cs-gpios = <&en7581_pinctrl 6 GPIO_ACTIVE_LOW>;
+		num-chipselects = <1>;
+
+		slic@0 {
+			compatible = "silabs,si3210";
+			reg = <0>;
+			spi-max-frequency = <1000000>;
+		};
+	};
+
+	dummy_codec: dummy_codec {
+		compatible = "d2,slic-dummy-codec";
+	};
+
+	sound_si3218x {
+		compatible = "airoha,an7581-si3218x-sound";
+
+		platform {
+			sound-dai = <&voip_pcm>;
+		};
+
+		codec {
+			sound-dai = <&dummy_codec>;
+		};
 	};
 
 	leds: gpio-leds {
@@ -146,6 +200,13 @@
 		mux {
 			function = "i2c";
 			groups = "i2c1";
+		};
+	};
+
+	pcm1_pins: pcm1-pins {
+		mux {
+			function = "pcm";
+			groups = "pcm1";
 		};
 	};
 
