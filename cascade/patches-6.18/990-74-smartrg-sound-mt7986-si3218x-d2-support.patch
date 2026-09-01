@@ -61,7 +61,7 @@
  	/* set ETDM_OUT5_CON4 */
  	regmap_update_bits(afe->regmap, ETDM_OUT5_CON4, OUT_SEL_FS_MASK,
  			   OUT_SEL_FS(ETDM_FS_16K));
-@@ -133,23 +147,35 @@ static int mt7986_si3218x_init(struct sn
+@@ -133,23 +147,45 @@ static int mt7986_si3218x_init(struct sn
  			   OUT_CLK_SRC(APLL_CLK));
  	regmap_update_bits(afe->regmap, ETDM_OUT5_CON4, OUT_RELATCH_MASK,
  			   OUT_RELATCH(AFE_FS_16K));
@@ -94,12 +94,22 @@
  			   ETDM_EN);
  
 +	virt_reg = ioremap(mtk_pcm_audio_ram_power, 32);
-+	iowrite32(0,virt_reg);
++	if (!virt_reg) {
++		/*
++		 * This write is undocumented vendor RAM-power magic that
++		 * the vendor driver never checked either, so let probe
++		 * continue without it instead of failing the card.
++		 */
++		dev_warn(afe->dev, "Failed to ioremap audio RAM power register\n");
++	} else {
++		iowrite32(0, virt_reg);
++		iounmap(virt_reg);
++	}
 +
  	return 0;
  }
  
-@@ -165,7 +191,7 @@ SND_SOC_DAILINK_DEFS(capture,
+@@ -165,7 +201,7 @@ SND_SOC_DAILINK_DEFS(capture,
  
  SND_SOC_DAILINK_DEFS(codec,
  	DAILINK_COMP_ARRAY(COMP_CPU("ETDM")),
@@ -108,7 +118,7 @@
  	DAILINK_COMP_ARRAY(COMP_EMPTY()));
  
  static struct snd_soc_dai_link mt7986_si3218x_dai_links[] = {
-@@ -176,7 +202,7 @@ static struct snd_soc_dai_link mt7986_si
+@@ -176,7 +212,7 @@ static struct snd_soc_dai_link mt7986_si
  		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
  			    SND_SOC_DPCM_TRIGGER_POST},
  		.dynamic = 1,
@@ -117,7 +127,7 @@
  		SND_SOC_DAILINK_REG(playback),
  	},
  	{
-@@ -185,7 +211,7 @@ static struct snd_soc_dai_link mt7986_si
+@@ -185,7 +221,7 @@ static struct snd_soc_dai_link mt7986_si
  		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
  			    SND_SOC_DPCM_TRIGGER_POST},
  		.dynamic = 1,
@@ -126,7 +136,7 @@
  		SND_SOC_DAILINK_REG(capture),
  	},
  	/* BE */
-@@ -194,10 +220,8 @@ static struct snd_soc_dai_link mt7986_si
+@@ -194,10 +230,8 @@ static struct snd_soc_dai_link mt7986_si
  		.no_pcm = 1,
  		.dai_fmt = SND_SOC_DAIFMT_DSP_A |
  			SND_SOC_DAIFMT_IB_NF |
