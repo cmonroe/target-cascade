@@ -1,0 +1,40 @@
+From: Piotr Kubik <piotr.kubik@adtran.com>
+Date: Wed, 3 Sep 2026 13:20:00 +0200
+Subject: [PATCH] netfilter: ctnetlink: fix inverted IPv6 address match in dump filter
+
+ctnetlink_filter_match_tuple() rejects an entry when
+!ipv6_addr_cmp(filter, entry) is true. ipv6_addr_cmp() is a memcmp() and
+returns 0 for equal addresses, so the condition is true exactly when the
+addresses match: a CTA_FILTER dump with an IPv6 CTA_IP_SRC or CTA_IP_DST
+skips every entry that matches the requested address and returns all
+the others. The IPv4 branch compares with != and behaves correctly.
+
+Observed on 6.18 with libnetfilter_conntrack NFCT_FILTER_DUMP_TUPLE: a
+dump filtered on src 2001:db8::10 returned only the ::1 entries, a dump
+filtered on ::1 returned only the non-::1 entries. conntrack-tools does
+not use the tuple filter for -L, which is why this went unnoticed.
+
+Use ipv6_addr_equal() so the IPv6 branch mirrors the IPv4 one.
+
+Fixes: cb8aa9a3affb ("netfilter: ctnetlink: add kernel side filtering for dump")
+Signed-off-by: Piotr Kubik <piotr.kubik@adtran.com>
+--- a/net/netfilter/nf_conntrack_netlink.c
++++ b/net/netfilter/nf_conntrack_netlink.c
+@@ -1096,13 +1096,13 @@ static int ctnetlink_filter_match_tuple(
+ 		break;
+ 	case NFPROTO_IPV6:
+ 		if ((flags & CTA_FILTER_FLAG(CTA_IP_SRC)) &&
+-		    !ipv6_addr_cmp(&filter_tuple->src.u3.in6,
+-				   &ct_tuple->src.u3.in6))
++		    !ipv6_addr_equal(&filter_tuple->src.u3.in6,
++				     &ct_tuple->src.u3.in6))
+ 			return 0;
+ 
+ 		if ((flags & CTA_FILTER_FLAG(CTA_IP_DST)) &&
+-		    !ipv6_addr_cmp(&filter_tuple->dst.u3.in6,
+-				   &ct_tuple->dst.u3.in6))
++		    !ipv6_addr_equal(&filter_tuple->dst.u3.in6,
++				     &ct_tuple->dst.u3.in6))
+ 			return 0;
+ 		break;
+ 	}
