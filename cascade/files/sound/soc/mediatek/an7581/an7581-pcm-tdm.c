@@ -182,6 +182,7 @@ struct an7581_pcm_stats {
 	u64 kicks[2];
 	u64 resync_runs;
 	u64 resync_skips_busy;
+	u64 block_resets;
 };
 
 struct an7581_pcm {
@@ -681,8 +682,9 @@ static int an7581_pcm_stats_show(struct seq_file *s, void *unused)
 		seq_printf(s, "%s_completions %llu\n%s_kicks %llu\n",
 			   dir_names[dir], pcm->stats.completions[dir],
 			   dir_names[dir], pcm->stats.kicks[dir]);
-	seq_printf(s, "resync_runs %llu\nresync_skips_busy %llu\n",
-		   pcm->stats.resync_runs, pcm->stats.resync_skips_busy);
+	seq_printf(s, "resync_runs %llu\nresync_skips_busy %llu\nblock_resets %llu\n",
+		   pcm->stats.resync_runs, pcm->stats.resync_skips_busy,
+		   pcm->stats.block_resets);
 
 	mutex_lock(&pcm->cfg_lock);
 	cfg = pcm->cfg;
@@ -755,59 +757,90 @@ static void an7581_pcm_cfg_update(struct an7581_pcm *pcm, unsigned int rate,
 	pcm->cfg.dchenr = dchenr;
 }
 
-/*
- * The engine holds the receive framing phase that turns highway bits into
- * descriptor bytes, and a TRDCR receive-DMA disable does not clear it. A
- * restart that only re-enables the DMA can resume one byte late, which shifts
- * the whole capture stream by one byte until the interface restarts.
- *
- * This repeats the sequence that cleared the fault in the field, in the
- * hw_init order and with the hw_init values. It includes the interrupt mask
- * and DMA enable clear, the CFG_VALID drop, the slot registers, CHBFOSR, the
- * DCHENR clear-then-set transition, the CFG_VALID raise, and the interrupt
- * mask restore.
- *
- * It excludes one element of that sequence, the descriptor ring base and size
- * registers. The exclusion is safe: the software ring state stayed healthy
- * through the fault, because hw_ptr advanced at 100 periods a second and the
- * completions never desynced, so the ring needs no repair. A write to a ring
- * base register could move the engine's ring cursor away from hw_idx, which
- * the driver keeps across a stop and a start, so leaving those registers alone
- * removes that question by construction.
- *
- * The caller holds cfg_lock and calls this only with cfg_dirty clear, so
- * pcm->cfg describes the registers the hardware runs.
- */
-static void an7581_pcm_iface_resync(struct an7581_pcm *pcm)
+/* vendor timing: 5 ms assert, 5 ms settle */
+static int an7581_pcm_reset_pulse(struct an7581_pcm *pcm)
 {
-	u32 picr = readl(pcm->base + REG_PICR);
-	u32 imr = readl(pcm->base + REG_IMR);
+	int ret;
 
-	writel(0, pcm->base + REG_IMR);
-	writel(0, pcm->base + REG_TRDCR);
-	writel(picr & ~PICR_CFG_VALID, pcm->base + REG_PICR);
+	ret = reset_control_assert(pcm->rst);
+	if (ret)
+		return ret;
+	usleep_range(5000, 6000);
+	ret = reset_control_deassert(pcm->rst);
+	if (ret)
+		return ret;
+	usleep_range(5000, 6000);
 
-	an7581_pcm_slots_program(pcm);
-	writel(pcm->cfg.chbfosr, pcm->base + REG_CHBFOSR);
-	an7581_pcm_dchenr_set(pcm, pcm->cfg.dchenr);
-
-	usleep_range(1000, 2000);
-	writel(picr | PICR_CFG_VALID, pcm->base + REG_PICR);
-	writel(imr, pcm->base + REG_IMR);
+	return 0;
 }
 
 /*
- * Both forms of re-init drop CFG_VALID, so neither must race a running engine,
- * and the engine must own no descriptor when one starts. They sleep, so callers
- * are process context and hold cfg_lock. A full re-init re-runs the whole
- * hardware setup for a changed configuration. A partial one repeats the
- * interface part of that setup and leaves the descriptor ring registers alone.
+ * A DMA disable at an arbitrary moment leaves the engine's receive byte order
+ * wrong at the next start about one stop in six: every capture sample then
+ * arrives with its two bytes exchanged, for the whole run. The moment of the
+ * disable decides it, no register shows the engine idle, and neither the
+ * CFG_VALID cycle nor the DMA re-enable clears the state; a disable timed
+ * some microseconds after the last transmit completion left a residual. The
+ * vendor driver resets the block and rebuilds the rings before every restart
+ * (pcmRestart: softReset, descInit), and that clears it. The reset returns
+ * the engine's ring cursors to the base, so the reclaim cursors follow, and
+ * hw_init repeats the whole setup with its CFG_VALID cycle. The caller holds
+ * cfg_lock with both directions idle and no descriptor owned by the engine.
+ *
+ * The engine finishes an in-flight descriptor after a DMA disable, and a
+ * quiesce that saw no progress for one descriptor time may still leave one
+ * running. A reset under a live bus master can hang the bus, so the reset
+ * waits a full descriptor time after the disables, as the vendor driver does.
+ */
+static int an7581_pcm_block_reset(struct an7581_pcm *pcm)
+{
+	unsigned int period_ms = DIV_ROUND_UP(pcm->stream[0].desc_frames, 8);
+	unsigned long flags;
+	int dir, ret;
+
+	writel(0, pcm->base + REG_IMR);
+	writel(0, pcm->base + REG_TRDCR);
+	synchronize_irq(pcm->irq);
+	msleep(max(period_ms, DIV_ROUND_UP(pcm->stream[1].desc_frames, 8)) + 2);
+
+	/*
+	 * Without the reset the engine's cursors stay where they are. The
+	 * busy skip returns -EBUSY and lets the start go on, so a failed pulse
+	 * must not.
+	 */
+	ret = an7581_pcm_reset_pulse(pcm);
+	if (ret) {
+		dev_err_ratelimited(pcm->dev, "block reset failed: %d\n", ret);
+		return -EIO;
+	}
+
+	spin_lock_irqsave(&pcm->lock, flags);
+	for (dir = 0; dir < 2; dir++) {
+		pcm->stream[dir].hw_idx = 0;
+		pcm->stream[dir].pending = 0;
+	}
+	memset(pcm->desc_cpu, 0,
+	       2 * AN7581_PCM_NUM_DESC * sizeof(struct an7581_pcm_hwdesc));
+	spin_unlock_irqrestore(&pcm->lock, flags);
+
+	an7581_pcm_hw_init(pcm);
+	pcm->stats.block_resets++;
+
+	return 0;
+}
+
+/*
+ * The re-init resets the block and drops CFG_VALID, so it must not race a
+ * running engine, and the engine must own no descriptor when it starts. It
+ * sleeps, so callers are process context and hold cfg_lock. A full re-init
+ * applies a changed configuration; a partial one, from the capture prepare,
+ * repeats the setup the hardware already runs.
  */
 static int an7581_pcm_engine_reinit_locked(struct an7581_pcm *pcm, bool full)
 {
 	unsigned long flags;
 	bool busy;
-	int dir;
+	int dir, ret;
 
 	lockdep_assert_held(&pcm->cfg_lock);
 
@@ -848,18 +881,22 @@ static int an7581_pcm_engine_reinit_locked(struct an7581_pcm *pcm, bool full)
 	for (dir = 0; dir < 2; dir++)
 		an7581_pcm_stream_quiesce(pcm, &pcm->stream[dir]);
 
-	if (full)
-		an7581_pcm_hw_init(pcm);
-	else
-		an7581_pcm_iface_resync(pcm);
+	ret = an7581_pcm_block_reset(pcm);
 
+	/*
+	 * A failed reset leaves the interrupts masked and the engine in an
+	 * unknown state, so the flag stays up and refuses every START until a
+	 * later re-init succeeds.
+	 */
 	spin_lock_irqsave(&pcm->lock, flags);
-	pcm->reprogramming = false;
-	if (!full)
-		pcm->stats.resync_runs++;
+	if (!ret) {
+		pcm->reprogramming = false;
+		if (!full)
+			pcm->stats.resync_runs++;
+	}
 	spin_unlock_irqrestore(&pcm->lock, flags);
 
-	return 0;
+	return ret;
 }
 
 static int an7581_pcm_reprogram_locked(struct an7581_pcm *pcm)
@@ -1082,6 +1119,7 @@ static int an7581_pcm_prepare(struct snd_soc_component *component,
 {
 	struct an7581_pcm *pcm = snd_soc_component_get_drvdata(component);
 	struct an7581_pcm_stream *stream;
+	int ret;
 
 	stream = an7581_pcm_substream_get(pcm, substream);
 	if (stream->running)
@@ -1091,33 +1129,35 @@ static int an7581_pcm_prepare(struct snd_soc_component *component,
 
 	/*
 	 * Only the capture direction disables the receive DMA, so only a
-	 * capture restart can leave the engine one byte late. The device
-	 * advertises neither PAUSE nor RESUME, so the core rejects every
+	 * capture restart can come up with the receive byte order wrong. The
+	 * device advertises neither PAUSE nor RESUME, so the core rejects every
 	 * trigger START that this callback does not precede.
 	 *
 	 * A dirty configuration means pcm->cfg does not describe the running
-	 * registers, so the full reprogram applies it. The partial resync
-	 * rewrites the slot map and CHBFOSR from pcm->cfg and therefore runs
-	 * only when the two agree.
+	 * registers, so the full reprogram applies it. The partial re-init
+	 * repeats the setup from pcm->cfg and therefore runs only when the two
+	 * agree.
 	 *
-	 * Both forms need both directions idle, because CFG_VALID cannot drop
-	 * under a live stream. An unlinked capture start beside live playback
-	 * proceeds without the resync and keeps the behaviour the driver had
-	 * before. The stats file counts that case as resync_skips_busy.
-	 * Production udsp links the two streams, so its prepares always find
-	 * both directions idle and always resync.
+	 * Both forms need both directions idle, because the block reset and
+	 * the CFG_VALID drop cannot happen under a live stream. An unlinked
+	 * capture start beside live playback proceeds without the re-init and
+	 * keeps the behaviour the driver had before. The stats file counts
+	 * that case as resync_skips_busy. Production udsp links the two
+	 * streams, so its prepares always find both directions idle and
+	 * always reset.
 	 */
 	if (substream->stream != SNDRV_PCM_STREAM_CAPTURE)
 		return 0;
 
 	mutex_lock(&pcm->cfg_lock);
 	if (pcm->cfg_dirty)
-		an7581_pcm_reprogram_locked(pcm);
+		ret = an7581_pcm_reprogram_locked(pcm);
 	else
-		an7581_pcm_engine_reinit_locked(pcm, false);
+		ret = an7581_pcm_engine_reinit_locked(pcm, false);
 	mutex_unlock(&pcm->cfg_lock);
 
-	return 0;
+	/* the busy skip keeps the start going; a failed reset does not */
+	return ret == -EBUSY ? 0 : ret;
 }
 
 static int an7581_pcm_trigger(struct snd_soc_component *component,
@@ -1368,9 +1408,10 @@ static int an7581_pcm_probe(struct platform_device *pdev)
 	if (ret)
 		return ret;
 
-	pcm->rst = devm_reset_control_get_optional_exclusive(dev, NULL);
+	pcm->rst = devm_reset_control_get_exclusive(dev, NULL);
 	if (IS_ERR(pcm->rst))
-		return PTR_ERR(pcm->rst);
+		return dev_err_probe(dev, PTR_ERR(pcm->rst),
+				     "missing the block reset\n");
 
 	scu = syscon_regmap_lookup_by_phandle(dev->of_node, "airoha,chip-scu");
 	if (IS_ERR(scu))
@@ -1410,17 +1451,11 @@ static int an7581_pcm_probe(struct platform_device *pdev)
 
 	/*
 	 * The en7581-scu reset controller implements only assert/deassert,
-	 * so pulse the block reset manually (vendor timing: 5 ms assert,
-	 * 5 ms settle).
+	 * so pulse the block reset manually.
 	 */
-	ret = reset_control_assert(pcm->rst);
+	ret = an7581_pcm_reset_pulse(pcm);
 	if (ret)
 		return ret;
-	usleep_range(5000, 6000);
-	ret = reset_control_deassert(pcm->rst);
-	if (ret)
-		return ret;
-	usleep_range(5000, 6000);
 
 	an7581_pcm_hw_init(pcm);
 
