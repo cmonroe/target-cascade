@@ -49,7 +49,9 @@ define Device/polecat
   DEVICE_DTS += mt7988d-smartrg-SDG-9732i
   DEVICE_DTS += mt7988d-smartrg-SDG-9712o
   DEVICE_DTS += an7581-smartrg-SDG-8716v
+  DEVICE_DTS += an7581-smartrg-SDG-8716v-eth
   DEVICE_DTS += an7581-smartrg-SDG-8736v
+  DEVICE_DTS += an7581-smartrg-SDG-8736v-eth
   DEVICE_DTS_DIR := ../dts
   DEVICE_PACKAGES += kmod-i2c-an7581
   ARTIFACTS := emmc-preloader.bin emmc-bl31-uboot.fip \
@@ -112,7 +114,9 @@ define Build/SrgFit
 		-i "SDG-9732i" -d $(KDIR)/image-mt7988d-smartrg-SDG-9732i.dtb.lzma -C lzma -h "crc32" -h "sha1" \
 		-i "SDG-9712o" -d $(KDIR)/image-mt7988d-smartrg-SDG-9712o.dtb.lzma -C lzma -h "crc32" -h "sha1" \
 		-i "SDG-8716v" -d $(KDIR)/image-an7581-smartrg-SDG-8716v.dtb.lzma -C lzma -h "crc32" -h "sha1" \
+		-i "SDG-8716v-eth" -d $(KDIR)/image-an7581-smartrg-SDG-8716v-eth.dtb.lzma -C lzma -h "crc32" -h "sha1" \
 		-i "SDG-8736v" -d $(KDIR)/image-an7581-smartrg-SDG-8736v.dtb.lzma -C lzma -h "crc32" -h "sha1" \
+		-i "SDG-8736v-eth" -d $(KDIR)/image-an7581-smartrg-SDG-8736v-eth.dtb.lzma -C lzma -h "crc32" -h "sha1" \
 		-c "300" -K k1 -R rdisk -D "srbpi" \
 		-c "402" -K k1 -R rdisk -D "834-5" \
 		-c "403" -K k1 -R rdisk -D "834-5" \
@@ -149,6 +153,8 @@ define Build/SrgFit
 		-c "511" -K k1 -R rdisk -D "SDG-9712o" -T "smartrg,sdg-9712o" \
 		-c "600" -K k2 -R rdisk -D "SDG-8716v" \
 		-c "601" -K k2 -R rdisk -D "SDG-8736v" \
+		-c "1600" -K k2 -R rdisk -D "SDG-8716v-eth" \
+		-c "1601" -K k2 -R rdisk -D "SDG-8736v-eth" \
 		-c "799" -K k1 -R rdisk -D "SDG-8712v" -T "smartrg,sdg-8712v"
 
 	PATH=$(LINUX_DIR)/scripts/dtc:$(PATH) mkimage -f $@.its $@.new
