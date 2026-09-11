@@ -74,7 +74,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  }
  
  static void mtk_xgdm_mac_link_up(struct mtk_mac *mac,
-@@ -5569,15 +5607,41 @@ static int mtk_set_pauseparam(struct net
+@@ -5565,15 +5603,41 @@ static int mtk_set_pauseparam(struct net
  static int mtk_get_eee(struct net_device *dev, struct ethtool_keee *eee)
  {
  	struct mtk_mac *mac = netdev_priv(dev);

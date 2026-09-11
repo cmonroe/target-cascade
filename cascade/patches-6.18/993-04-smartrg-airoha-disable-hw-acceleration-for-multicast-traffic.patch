@@ -9,7 +9,7 @@ Signed-off-by: rakesh chanda <rakesh.chanda@adtran.com>
 
 --- a/drivers/net/ethernet/airoha/arht_dp_api.c
 +++ b/drivers/net/ethernet/airoha/arht_dp_api.c
-@@ -1356,7 +1356,7 @@ static void airoha_get_entry_bind(u32 msg1, struct airoha_queue *q, struct airoh
+@@ -1372,7 +1372,7 @@ static void airoha_get_entry_bind(u32 ms
  								    : LAN_IDX_FROM_SPTAG(sptag);
  		}
  		airoha_ppe_check_skb(&eth->ppe->dev, q->skb, hash, false);
@@ -18,4 +18,3 @@ Signed-off-by: rakesh chanda <rakesh.chanda@adtran.com>
  
  	} else {
  		if (!eth->npu) {			
-

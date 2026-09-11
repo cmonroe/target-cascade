@@ -25,7 +25,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -3878,39 +3878,46 @@ static int mtk_device_event(struct notif
+@@ -3878,33 +3878,40 @@ static int mtk_device_event(struct notif
  	struct dsa_port *dp;
  	unsigned int queue;
  
@@ -76,9 +76,3 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	if (queue >= eth->soc->num_tx_queues)
  		return NOTIFY_DONE;
  
- 	if (mac->speed > 0 && mac->speed <= s.base.speed)
- 		s.base.speed = 0;
- 
- 	mtk_set_queue_speed(eth, queue, s.base.speed);
- 
- 	return NOTIFY_DONE;

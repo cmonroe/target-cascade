@@ -24,7 +24,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  }
  
  static int mtk_get_irqs(struct platform_device *pdev, struct mtk_eth *eth)
-@@ -4520,7 +4521,7 @@ static void mtk_hw_reset_monitor_work(st
+@@ -4516,7 +4517,7 @@ static void mtk_hw_reset_monitor_work(st
  		goto out;
  
  	/* DMA stuck checks */
@@ -33,7 +33,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  		schedule_work(&eth->pending_work);
  
  out:
-@@ -5971,6 +5972,7 @@ static int mtk_probe(struct platform_dev
+@@ -5967,6 +5968,7 @@ static int mtk_probe(struct platform_dev
  
  	eth->rx_dim.mode = DIM_CQ_PERIOD_MODE_START_FROM_EQE;
  	INIT_WORK(&eth->rx_dim.work, mtk_dim_rx);

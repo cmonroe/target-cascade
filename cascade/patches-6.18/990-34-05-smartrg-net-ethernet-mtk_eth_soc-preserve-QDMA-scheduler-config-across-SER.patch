@@ -16,7 +16,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -4784,6 +4784,50 @@ static int mtk_do_ioctl(struct net_devic
+@@ -4780,6 +4780,50 @@ static int mtk_do_ioctl(struct net_devic
  	return -EOPNOTSUPP;
  }
  
@@ -67,7 +67,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static void mtk_prepare_for_reset(struct mtk_eth *eth)
  {
  	u32 val;
-@@ -4827,6 +4871,7 @@ static void mtk_pending_work(struct work
+@@ -4823,6 +4867,7 @@ static void mtk_pending_work(struct work
  
  	mtk_hw_dump(eth);
  
@@ -75,7 +75,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	mtk_prepare_for_reset(eth);
  	mtk_wed_fe_reset();
  	/* Run again reset preliminary configuration in order to avoid any
-@@ -4878,6 +4923,7 @@ static void mtk_pending_work(struct work
+@@ -4874,6 +4919,7 @@ static void mtk_pending_work(struct work
  	clear_bit(MTK_RESETTING, &eth->state);
  
  	mtk_wed_fe_reset_complete();
