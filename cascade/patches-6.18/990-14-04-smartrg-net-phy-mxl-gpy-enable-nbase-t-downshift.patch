@@ -1,0 +1,76 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Fri, 11 Sep 2026 15:46:57 -0700
+Subject: [PATCH] net: phy: mxl-gpy: enable NBASE-T downshift on 2.5G PHYs
+
+On a cable that cannot sustain 2.5G, the PHY trains at 2.5GBASE-T,
+fails, and leaves the link down. It does not fall back to a lower
+speed on its own.
+
+Enable NBASE-T downshift. The PHY then drops to a lower speed after
+a set number of failed training cycles. Program VSPEC1_NBT_DS_CTRL
+(VSPEC1 0x0a) with DOWNSHIFT_EN set, a DOWNSHIFT_THR of 5, and
+NO_NRG_RST set. NO_NRG_RST makes the PHY re-advertise all speeds
+when the cable loses energy.
+
+Gate the write on 2500baseT_Full support. This affects only the
+multi-gigabit copper parts, for example GPY211 and MxL86211C. The
+1G-only GPY115 shares this config_init and is not affected.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/phy/mxl-gpy.c |   35 ++++++++++++++++++++++++++++++++++-
+ 1 file changed, 34 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/phy/mxl-gpy.c
++++ b/drivers/net/phy/mxl-gpy.c
+@@ -106,6 +106,14 @@
+ #define VSPEC1_SGMII_ANEN_ANRS	(VSPEC1_SGMII_CTRL_ANEN | \
+ 				 VSPEC1_SGMII_CTRL_ANRS)
+ 
++/* NBASE-T downshift */
++#define VSPEC1_NBT_DS_CTRL		0x0a
++#define VSPEC1_NBT_DS_CTRL_THR		GENMASK(5, 2)	/* dsh_thr */
++#define VSPEC1_NBT_DS_CTRL_EN		BIT(1)		/* dsh_en */
++#define VSPEC1_NBT_DS_CTRL_NRGRST	BIT(0)		/* re-advertise all speeds on no energy */
++
++#define GPY_DOWNSHIFT_THR		5		/* validated on-device (0x0417) */
++
+ /* Temperature sensor */
+ #define VSPEC1_TEMP_STA	0x0E
+ #define VSPEC1_TEMP_STA_DATA	GENMASK(9, 0)
+@@ -375,9 +383,34 @@ static int gpy_led_write(struct phy_devi
+ 	return 0;
+ }
+ 
++static int gpy_config_downshift(struct phy_device *phydev)
++{
++	u16 mask, val;
++
++	/* This runs for the 1G-only parts too (shared config_init); only the
++	 * multi-gigabit copper PHYs implement NBASE-T downshift.
++	 */
++	if (!linkmode_test_bit(ETHTOOL_LINK_MODE_2500baseT_Full_BIT,
++			       phydev->supported))
++		return 0;
++
++	mask = VSPEC1_NBT_DS_CTRL_THR | VSPEC1_NBT_DS_CTRL_EN |
++	       VSPEC1_NBT_DS_CTRL_NRGRST;
++	val = FIELD_PREP(VSPEC1_NBT_DS_CTRL_THR, GPY_DOWNSHIFT_THR) |
++	      VSPEC1_NBT_DS_CTRL_EN | VSPEC1_NBT_DS_CTRL_NRGRST;
++
++	return phy_modify_mmd(phydev, MDIO_MMD_VEND1, VSPEC1_NBT_DS_CTRL,
++			      mask, val);
++}
++
+ static int gpy_config_init(struct phy_device *phydev)
+ {
+-	/* Nothing to configure. Configuration Requirement Placeholder */
++	int ret;
++
++	ret = gpy_config_downshift(phydev);
++	if (ret)
++		return ret;
++
+ 	return gpy_led_write(phydev);
+ }
+ 
