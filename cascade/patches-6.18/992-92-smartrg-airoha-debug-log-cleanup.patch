@@ -1,3 +1,17 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Mon, 14 Sep 2026 16:32:00 -0700
+Subject: net: airoha: quiet the vendor debug printk
+
+Drop the leading newlines the serdes probe prints on every register
+base lookup, and demote the per-session "wifi_lo: add_ety" line of
+arht_wifi_lo.c from pr_info_ratelimited to pr_debug_ratelimited: it
+fired for every new TCP session from a matched application (703 lines
+in one boot of an SDG-8736v under iperf3) and carries nothing an
+operator acts on. With CONFIG_DYNAMIC_DEBUG the line stays reachable
+through the dynamic debug control file.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
 --- a/drivers/net/pcs/airoha/pcs-airoha-common.c
 +++ b/drivers/net/pcs/airoha/pcs-airoha-common.c
 @@ -1422,26 +1422,26 @@ static int airoha_pcs_probe(struct platf
@@ -32,3 +46,18 @@
  			return serdes_common_phy->pon_pma_phy_rg_base; 			
  			break;
  			
+--- a/drivers/net/ethernet/airoha/arht_wifi_lo.c
++++ b/drivers/net/ethernet/airoha/arht_wifi_lo.c
+@@ -900,9 +900,9 @@ static void wifi_lo_add_ety(struct sk_bu
+ 
+ 	wifi_lo_active_inc();
+ 
+-	pr_info_ratelimited("wifi_lo: add_ety lport=%u rport=%u comm=%s\n",
+-	                    ntohs(th->source), ntohs(th->dest),
+-	                    current->comm);
++	pr_debug_ratelimited("wifi_lo: add_ety lport=%u rport=%u comm=%s\n",
++	                     ntohs(th->source), ntohs(th->dest),
++	                     current->comm);
+ }
+ 
+ /*

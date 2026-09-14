@@ -100,7 +100,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  }
 --- a/drivers/net/ethernet/airoha/arht_ppe.c
 +++ b/drivers/net/ethernet/airoha/arht_ppe.c
-@@ -3601,6 +3601,13 @@ void airoha_pon_set_macaddr(const u8 *ad
+@@ -3635,6 +3635,13 @@ void airoha_pon_set_macaddr(const u8 *ad
  	u32 val, reg;
  	struct airoha_eth *eth = glb_eth;
  
@@ -114,7 +114,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	reg = REG_FE_WAN_MAC_H;
  	val = (addr[0] << 16) | (addr[1] << 8) | addr[2];
  	airoha_fe_wr(eth, reg, val);
-@@ -4189,6 +4196,8 @@ static struct notifier_block airoha_ppe_
+@@ -4223,6 +4230,8 @@ static struct notifier_block airoha_ppe_
  	.notifier_call = airoha_ppe_netdev_event,
  };
  
@@ -123,7 +123,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  void arht_ppe_init(struct airoha_ppe *ppe)
  {
  	/*clear all sram ppe table*/
-@@ -4204,7 +4213,10 @@ void arht_ppe_init(struct airoha_ppe *pp
+@@ -4238,7 +4247,10 @@ void arht_ppe_init(struct airoha_ppe *pp
  	arht_ppe_general_init(ppe);
  	airoha_hwnat_loopback_init();
  
@@ -135,7 +135,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  }
  
  void arht_ppe_deinit(void)
-@@ -4219,5 +4231,8 @@ void arht_ppe_deinit(void)
+@@ -4253,5 +4265,8 @@ void arht_ppe_deinit(void)
  	arht_ppe_general_exit();
  	airoha_hwnat_loopback_exit();
  

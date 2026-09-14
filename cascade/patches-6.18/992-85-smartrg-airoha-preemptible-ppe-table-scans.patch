@@ -1,0 +1,134 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Mon, 14 Sep 2026 16:30:00 -0700
+Subject: net: airoha: ppe: make full-table FOE scans preemptible
+
+Every clean_entry_by_* request runs on clean_entry_wq (WQ_UNBOUND,
+max_active 1) as a linear walk of airoha_ppe_get_total_num_entries()
+entries, 32768 on the AN7581, calling airoha_ppe_foe_get_entry() per
+entry; the 16384 SRAM entries each cost a REG_PPE_RAM_CTRL request, an
+ACK poll and 20 register reads. Measured 55 to 61 ms per work item with
+no scheduling point inside. arht_wifi_lo expires a session after 1 s of
+transmit idle and queues a CLEAN_BY_PORT scan for each, so an iperf3 run
+queued 316 items in 15 s, and on this PREEMPT_NONE kernel a SCHED_FIFO
+voice engine thread on the same CPU waited the whole item every time
+(wake-to-run 54 ms, then a playback underrun and an xrun).
+
+Add arht_ppe_scan_relax(): cond_resched() every 128 entries, about
+0.45 ms at 3.5 us per SRAM entry, called with ppe_lock released, at the
+top of the loop body of every process-context scanner: by_gemport,
+by_channel, by_fport_and_channel, by_mac_common, by_type (which covers
+clean_multicast_entry), by_ip, by_port and by_landev. by_landev is also
+reached from the netdev notifier under RTNL, which is process context.
+reuse_shrink_table() runs under shnk_tbl_lock and
+airoha_ppe_clean_sram_table() holds ppe_lock across its loop; both stay
+as they are, the latter reached only by the blapi clean-table command.
+
+The scan still costs the same CPU time; it no longer holds the CPU. A
+single-entry delete at session expiry, by the FOE index wifi_lo already
+records for the ingress direction plus the egress index it does not,
+would remove the scan; it is not safe alone because PPE ageing is never
+enabled and an undeleted entry leaks its slot.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+--- a/drivers/net/ethernet/airoha/arht_ppe.c
++++ b/drivers/net/ethernet/airoha/arht_ppe.c
+@@ -14,6 +14,7 @@
+ #include <linux/netdevice.h>
+ #include <linux/vmalloc.h>
+ #include <linux/workqueue.h>
++#include <linux/sched.h>
+ #include <linux/notifier.h>
+ 
+ #include "airoha_eth.h"
+@@ -82,6 +83,26 @@ static struct workqueue_struct *clean_en
+ *************************************************************************
+ */
+ extern spinlock_t ppe_lock;
++
++/*
++ * A full-table FOE scan walks airoha_ppe_get_total_num_entries() entries
++ * (32768 on the AN7581) at 55 to 61 ms per scan, and the 16384 SRAM entries
++ * carry almost all of it: each is a REG_PPE_RAM_CTRL request, an ACK poll
++ * and 20 register reads, about 3.5 us. Nothing else runs on that CPU until
++ * the scanner blocks or returns, so the scanners give the scheduler a turn
++ * every 128 entries, about 0.45 ms, which keeps the wake of a SCHED_FIFO
++ * task on the same CPU under a millisecond. Call only with ppe_lock
++ * released: spin_lock_bh() raises the preempt count even without kernel
++ * preemption.
++ */
++#define ARHT_PPE_SCAN_RELAX_INTERVAL	128
++
++static inline void arht_ppe_scan_relax(unsigned int idx)
++{
++	if ((idx & (ARHT_PPE_SCAN_RELAX_INTERVAL - 1)) == 0)
++		cond_resched();
++}
++
+ extern int (*ra_sw_nat_hook_clean_table) (void);
+ 
+ int (*ra_sw_nat_hook_drop_packet) (struct sk_buff * skb) = NULL;
+@@ -1815,6 +1836,7 @@ int airoha_ppe_clean_entry_by_gemport(un
+ 
+ 	for (idx = 0; idx < ppe_num_entries;idx++)
+ 	{
++        arht_ppe_scan_relax(idx);
+         foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
+ 
+ 		if(foe_entry == NULL){
+@@ -1870,6 +1892,7 @@ static int airoha_ppe_clean_entry_by_cha
+ 
+ 	for (idx = 0; idx < ppe_num_entries;idx++)
+ 	{
++        arht_ppe_scan_relax(idx);
+         foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
+ 
+ 		if(foe_entry == NULL){
+@@ -1940,6 +1963,7 @@ static int airoha_ppe_clean_entry_by_fpo
+ 
+ 	for (idx = 0; idx < ppe_num_entries; idx++)
+ 	{
++		arht_ppe_scan_relax(idx);
+ 		foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
+ 
+ 		if(foe_entry == NULL){
+@@ -2005,6 +2029,7 @@ static int airoha_ppe_clean_entry_by_mac
+ 
+ 	for (idx = 0; idx < ppe_num_entries; idx++)
+ 	{
++		arht_ppe_scan_relax(idx);
+ 		foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
+ 
+ 		if(foe_entry == NULL){
+@@ -2122,6 +2147,7 @@ static int airoha_ppe_clean_entry_by_typ
+ 	
+ 	for (idx = 0; idx < ppe_num_entries; idx++)
+ 	{
++		arht_ppe_scan_relax(idx);
+ 		foe_entry = &foe_entry_local;
+ 		foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
+ 
+@@ -2184,6 +2210,7 @@ static int airoha_ppe_clean_entry_by_ip(
+ 
+ 	for (idx = 0; idx < ppe_num_entries; idx++)
+ 	{
++		arht_ppe_scan_relax(idx);
+ 		foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
+ 		if(foe_entry == NULL){
+ 			continue;
+@@ -2271,6 +2298,7 @@ static int airoha_ppe_clean_entry_by_por
+     ppe_num_entries = airoha_ppe_get_total_num_entries(glb_eth->ppe);
+     for (idx = 0; idx < ppe_num_entries; idx++)
+     {
++        arht_ppe_scan_relax(idx);
+         foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
+         if (foe_entry == NULL) {
+             continue;
+@@ -2376,6 +2404,7 @@ static int airoha_ppe_clean_entry_by_lan
+ 
+ 	for (idx = 0; idx < ppe_num_entries; idx++)
+ 	{
++		arht_ppe_scan_relax(idx);
+ 		foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
+ 		if (foe_entry == NULL) {
+ 			continue;

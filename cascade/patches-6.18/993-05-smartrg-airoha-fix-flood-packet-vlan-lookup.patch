@@ -58,7 +58,7 @@ Signed-off-by: Hoang Viet Pham <hoang.pham@adtran.com>
 ---
 --- a/drivers/net/ethernet/airoha/arht_ppe.c
 +++ b/drivers/net/ethernet/airoha/arht_ppe.c
-@@ -332,7 +332,7 @@ static struct net_device* arht_get_vland
+@@ -353,7 +353,7 @@ static struct net_device* arht_get_vland
  	return dev;
  }
  
@@ -67,7 +67,7 @@ Signed-off-by: Hoang Viet Pham <hoang.pham@adtran.com>
  {
  	struct net_bridge *br;
  	struct net_device *dev = NULL, *tmp_dev = NULL;
-@@ -369,7 +369,14 @@ static int airoha_check_flood_packet(str
+@@ -390,7 +390,14 @@ static int airoha_check_flood_packet(str
  			tmp_dev = arht_get_vlandev(skb);
  			if(!tmp_dev){
  				struct net_device *br_dev;
@@ -82,7 +82,7 @@ Signed-off-by: Hoang Viet Pham <hoang.pham@adtran.com>
  				rcu_read_lock();
  				for_each_netdev_rcu(dev_net(skb->dev), br_dev) {
  					if (!netif_is_bridge_master(br_dev))
-@@ -377,7 +384,7 @@ static int airoha_check_flood_packet(str
+@@ -398,7 +405,7 @@ static int airoha_check_flood_packet(str
  					struct net_bridge *br_tmp = netdev_priv(br_dev);
  					if (!br_tmp)
  						continue;
@@ -91,7 +91,7 @@ Signed-off-by: Hoang Viet Pham <hoang.pham@adtran.com>
  					if (f_tmp && f_tmp->dst) {
  						rcu_read_unlock();
  						return 1;
-@@ -404,12 +411,21 @@ static int airoha_check_flood_packet(str
+@@ -425,12 +432,21 @@ static int airoha_check_flood_packet(str
  	}
  
  	addr = skb->data;
@@ -116,7 +116,7 @@ Signed-off-by: Hoang Viet Pham <hoang.pham@adtran.com>
  	rcu_read_unlock();
  
  	if (dev && dev == tmp_dev){
-@@ -1307,7 +1323,7 @@ static void airoha_ppe_pon_sfu_bind(stru
+@@ -1328,7 +1344,7 @@ static void airoha_ppe_pon_sfu_bind(stru
  {
  	if (!airoha_is_pon_point_to_point_mode(skb)) {
  		//if not point to ponit mode, need to check mac table in kernel
@@ -125,7 +125,7 @@ Signed-off-by: Hoang Viet Pham <hoang.pham@adtran.com>
  	        return;
  	    }
  	}
-@@ -1608,7 +1624,7 @@ int airoha_ppe_tx_handler
+@@ -1629,7 +1645,7 @@ int airoha_ppe_tx_handler
  	}
  
  	//not flood packet, for bridge wan mode
