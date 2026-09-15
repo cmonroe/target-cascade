@@ -1,0 +1,114 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Tue, 15 Sep 2026 14:23:58 -0700
+Subject: [PATCH] ASoC: add the SLIC dummy and SI3218X drivers to the build
+
+The SDG voice boards use three drivers that are not in the kernel
+tree: the SLIC dummy codec, the Proslic SI3218X SPI codec, and the
+MT7986 SI3218X machine driver. The C sources ship through the
+target files/ overlay, so this patch carries only the Kconfig and
+Makefile entries that build them.
+
+The slic-dummy.c hunk renames two DAI fields to their current ASoC
+names; the overlay file predates the rename.
+
+The SI3218X entries come from the MediaTek SDK patches by Maso
+Huang; this patch merges them with the SLIC dummy codec entries.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ sound/soc/codecs/Kconfig           |    8 ++++++++
+ sound/soc/codecs/Makefile          |    3 +++
+ sound/soc/codecs/slic-dummy.c      |    4 ++--
+ sound/soc/mediatek/Kconfig         |   10 ++++++++++
+ sound/soc/mediatek/mt7986/Makefile |    1 +
+ 5 files changed, 24 insertions(+), 2 deletions(-)
+
+--- a/sound/soc/codecs/Makefile
++++ b/sound/soc/codecs/Makefile
+@@ -290,6 +290,7 @@ snd-soc-alc5632-y := alc5632.o
+ snd-soc-sigmadsp-y := sigmadsp.o
+ snd-soc-sigmadsp-i2c-y := sigmadsp-i2c.o
+ snd-soc-sigmadsp-regmap-y := sigmadsp-regmap.o
++snd-soc-si3218x-spi-objs := si3218x-spi.o
+ snd-soc-si476x-y := si476x.o
+ snd-soc-sma1303-y := sma1303.o
+ snd-soc-sma1307-y := sma1307.o
+@@ -720,7 +721,9 @@ obj-$(CONFIG_SND_SOC_SGTL5000)  += snd-s
+ obj-$(CONFIG_SND_SOC_SIGMADSP)	+= snd-soc-sigmadsp.o
+ obj-$(CONFIG_SND_SOC_SIGMADSP_I2C)	+= snd-soc-sigmadsp-i2c.o
+ obj-$(CONFIG_SND_SOC_SIGMADSP_REGMAP)	+= snd-soc-sigmadsp-regmap.o
++obj-$(CONFIG_SND_SOC_SI3218X_SPI) += snd-soc-si3218x-spi.o
+ obj-$(CONFIG_SND_SOC_SI476X)	+= snd-soc-si476x.o
++obj-$(CONFIG_SND_SOC_SLIC_DUMMY)	+= slic-dummy.o
+ obj-$(CONFIG_SND_SOC_SMA1303)	+= snd-soc-sma1303.o
+ obj-$(CONFIG_SND_SOC_SMA1307)	+= snd-soc-sma1307.o
+ obj-$(CONFIG_SND_SOC_SPDIF)	+= snd-soc-spdif-rx.o snd-soc-spdif-tx.o
+--- a/sound/soc/codecs/Kconfig
++++ b/sound/soc/codecs/Kconfig
+@@ -246,6 +246,7 @@ config SND_SOC_ALL_CODECS
+ 	imply SND_SOC_RTQ9128
+ 	imply SND_SOC_SDW_MOCKUP
+ 	imply SND_SOC_SGTL5000
++	imply SND_SOC_SI3218X_SPI
+ 	imply SND_SOC_SI476X
+ 	imply SND_SOC_SIMPLE_AMPLIFIER
+ 	imply SND_SOC_SIMPLE_MUX
+@@ -2757,6 +2758,10 @@ config SND_SOC_NTP8835
+ 	tristate "NeoFidelity NTP8835 and NTP8835C amplifiers"
+ 	depends on I2C
+ 
++config SND_SOC_SI3218X_SPI
++	tristate "Proslic SI3218X CODEC - SPI"
++	depends on SPI
++
+ config SND_SOC_TPA6130A2
+ 	tristate "Texas Instruments TPA6130A2 headphone amplifier"
+ 	depends on I2C
+@@ -2788,4 +2793,7 @@ config SND_SOC_LPASS_TX_MACRO
+ 	select SND_SOC_LPASS_MACRO_COMMON
+ 	tristate "Qualcomm TX Macro in LPASS(Low Power Audio SubSystem)"
+ 
++config SND_SOC_SLIC_DUMMY
++	tristate "SLIC dummy codec driver"
++
+ endmenu
+--- a/sound/soc/codecs/slic-dummy.c
++++ b/sound/soc/codecs/slic-dummy.c
+@@ -102,9 +102,9 @@ static struct snd_soc_dai_driver dummy_c
+ 		.formats = STUB_FORMATS,
+ 	},
+ 	/* dai properties */
+-	.symmetric_rates = 1,
++	.symmetric_rate = 1,
+ 	.symmetric_channels = 1,
+-	.symmetric_samplebits = 1,
++	.symmetric_sample_bits = 1,
+ 	/* dai operations */
+ 	.ops = &dummy_component_aif_ops,
+ };
+--- a/sound/soc/mediatek/Kconfig
++++ b/sound/soc/mediatek/Kconfig
+@@ -96,6 +96,16 @@ config SND_SOC_MT7986_WM8960
+ 	  Select Y if you have such device.
+ 	  If unsure select "N".
+ 
++config SND_SOC_MT7986_SI3218X
++	tristate "ASoc Audio driver for MT7986 with SI3218X codec"
++	depends on SND_SOC_MT7986 && SPI
++	select SND_SOC_SLIC_DUMMY
++	help
++	  This adds support for ASoC machine driver for MediaTek MT7986
++	  boards with the SI3218X codecs.
++	  Select Y if you have such device.
++	  If unsure select "N".
++
+ config SND_SOC_MT8173
+ 	tristate "ASoC support for Mediatek MT8173 chip"
+ 	depends on ARCH_MEDIATEK
+--- a/sound/soc/mediatek/mt7986/Makefile
++++ b/sound/soc/mediatek/mt7986/Makefile
+@@ -7,3 +7,4 @@ snd-soc-mt7986-afe-y := \
+ 
+ obj-$(CONFIG_SND_SOC_MT7986) += snd-soc-mt7986-afe.o
+ obj-$(CONFIG_SND_SOC_MT7986_WM8960) += mt7986-wm8960.o
++obj-$(CONFIG_SND_SOC_MT7986_SI3218X) += mt7986-si3218x.o
