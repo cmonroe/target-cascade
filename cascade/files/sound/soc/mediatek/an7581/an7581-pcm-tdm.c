@@ -21,7 +21,7 @@
  *
  * DT binding:
  *	voip_pcm: pcm@1fbd0000 {
- *		compatible = "airoha,en7581-pcm";
+ *		compatible = "airoha,an7581-pcm";
  *		reg = <0x0 0x1fbd0000 0x0 0x1000>;
  *		interrupts = <GIC_SPI 27 IRQ_TYPE_LEVEL_HIGH>;
  *		resets = <&scuclk EN7581_PCM1_RST>;
@@ -74,7 +74,14 @@
 
 #define REG_ISR				0x24
 #define REG_IMR				0x28
+#define  INT_ISI2			BIT(16)
+#define  INT_ZSI2			BIT(15)
 #define  INT_SLIC			BIT(14)
+#define  INT_SFC			BIT(13)
+#define  INT_ISI1			BIT(12)
+#define  INT_ZSI1			BIT(11)
+#define  INT_HUNT_ERR_AFTER_FINISH	BIT(10)
+#define  INT_HUNT_OVERTIME		BIT(9)
 #define  INT_AHB_BUS_ERR		BIT(8)
 #define  INT_RBUF_OVERRUN		BIT(7)
 #define  INT_TBUF_UNDERRUN		BIT(6)
@@ -82,6 +89,8 @@
 #define  INT_TDESC_END			BIT(4)
 #define  INT_RDESC_UPDATE		BIT(3)
 #define  INT_TDESC_UPDATE		BIT(2)
+#define  INT_FRAME_BOUNDARY		BIT(0)
+#define AN7581_PCM_ISR_BITS		32
 /*
  * TX buffer underrun is a non-event: an idle line legitimately runs the
  * ring dry and the engine just transmits idle until the next arm+kick
@@ -94,10 +103,14 @@
 #define REG_TDRBAR			0x34
 #define REG_RDRBAR			0x38
 #define REG_TRDRSR			0x3c
+#define  TRDRSR_DESC_OFFSET		GENMASK(7, 4)
+#define  TRDRSR_DESC_SIZE		GENMASK(3, 0)
 #define REG_TRDCR			0x40
+#define  TRDCR_DMA_POLICY		GENMASK(3, 2)
 #define  TRDCR_RXDMA_EN			BIT(1)
 #define  TRDCR_TXDMA_EN			BIT(0)
 #define REG_CHBFOSR			0xa8
+#define  CHBFOSR_OFFSET			GENMASK(15, 0)
 #define REG_DCHENR			0xac
 
 #define AN7581_PCM_NUM_DESC		15
@@ -177,7 +190,7 @@ struct an7581_pcm_cfg {
 
 struct an7581_pcm_stats {
 	u64 irq_total;
-	u64 isr_bits[16];
+	u64 isr_bits[AN7581_PCM_ISR_BITS];
 	u64 completions[2];
 	u64 kicks[2];
 	u64 resync_runs;
@@ -574,7 +587,7 @@ static irqreturn_t an7581_pcm_irq(int irq, void *dev_id)
 		return IRQ_NONE;
 
 	pcm->stats.irq_total++;
-	for (dir = 0; dir < 16; dir++)
+	for (dir = 0; dir < AN7581_PCM_ISR_BITS; dir++)
 		if (isr & BIT(dir))
 			pcm->stats.isr_bits[dir]++;
 
@@ -656,12 +669,13 @@ static void an7581_pcm_stats_bounce(struct seq_file *s,
 
 static int an7581_pcm_stats_show(struct seq_file *s, void *unused)
 {
-	static const char * const isr_names[16] = {
+	static const char * const isr_names[AN7581_PCM_ISR_BITS] = {
 		[0] = "frame_boundary", [2] = "tdesc_update",
 		[3] = "rdesc_update", [4] = "tdesc_end", [5] = "rdesc_end",
 		[6] = "tbuf_underrun", [7] = "rbuf_overrun", [8] = "ahb_bus_err",
 		[9] = "hunt_overtime", [10] = "hunt_err_after_finish",
-		[11] = "zsi", [12] = "isi", [14] = "slic",
+		[11] = "zsi1", [12] = "isi1", [13] = "sfc", [14] = "slic",
+		[15] = "zsi2", [16] = "isi2",
 	};
 	static const char * const dir_names[2] = { "tx", "rx" };
 	struct an7581_pcm *pcm = s->private;
@@ -671,7 +685,7 @@ static int an7581_pcm_stats_show(struct seq_file *s, void *unused)
 	int dir, i;
 
 	seq_printf(s, "irq_total %llu\n", pcm->stats.irq_total);
-	for (i = 0; i < 16; i++) {
+	for (i = 0; i < AN7581_PCM_ISR_BITS; i++) {
 		if (!pcm->stats.isr_bits[i] && !isr_names[i])
 			continue;
 		seq_printf(s, "isr_bit%d_%s %llu\n", i,
@@ -1353,7 +1367,8 @@ static void an7581_pcm_hw_init(struct an7581_pcm *pcm)
 				   AN7581_PCM_NUM_DESC *
 				   sizeof(struct an7581_pcm_hwdesc)),
 	       pcm->base + REG_RDRBAR);
-	writel((AN7581_PCM_DESC_STRIDE_DW << 4) | AN7581_PCM_NUM_DESC,
+	writel(FIELD_PREP(TRDRSR_DESC_OFFSET, AN7581_PCM_DESC_STRIDE_DW) |
+	       FIELD_PREP(TRDRSR_DESC_SIZE, AN7581_PCM_NUM_DESC),
 	       pcm->base + REG_TRDRSR);
 	/*
 	 * aos writes the channel stride and the channel enable inside the
@@ -1361,7 +1376,8 @@ static void an7581_pcm_hw_init(struct an7581_pcm *pcm)
 	 * cannot: CHBFOSR is one register for both directions, so the
 	 * direction that started last used to overwrite the other's stride.
 	 */
-	writel(pcm->cfg.chbfosr, pcm->base + REG_CHBFOSR);
+	writel(FIELD_PREP(CHBFOSR_OFFSET, pcm->cfg.chbfosr),
+	       pcm->base + REG_CHBFOSR);
 	an7581_pcm_dchenr_set(pcm, pcm->cfg.dchenr);
 
 	usleep_range(1000, 2000);
@@ -1478,7 +1494,7 @@ static int an7581_pcm_probe(struct platform_device *pdev)
 }
 
 static const struct of_device_id an7581_pcm_of_match[] = {
-	{ .compatible = "airoha,en7581-pcm" },
+	{ .compatible = "airoha,an7581-pcm" },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, an7581_pcm_of_match);

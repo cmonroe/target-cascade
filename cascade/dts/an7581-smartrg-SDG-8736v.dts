@@ -71,7 +71,7 @@
 	};
 
 	voip_pcm: pcm@1fbd0000 {
-		compatible = "airoha,en7581-pcm";
+		compatible = "airoha,an7581-pcm";
 		reg = <0x0 0x1fbd0000 0x0 0x1000>;
 		interrupts = <GIC_SPI 27 IRQ_TYPE_LEVEL_HIGH>;
 		resets = <&scuclk EN7581_PCM1_RST>;
