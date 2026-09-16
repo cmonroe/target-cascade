@@ -46,6 +46,9 @@
 			gpios = <&pio 74 GPIO_ACTIVE_HIGH>;
 		};
 
+		/* gpio-export,output is the raw pin level; the active-low
+		 * flag only inverts the sysfs value. 1 keeps the GPS disabled.
+		 */
 		gps_enable {
 			gpio-export,name = "gps_enable";
 			gpio-export,output = <1>;
