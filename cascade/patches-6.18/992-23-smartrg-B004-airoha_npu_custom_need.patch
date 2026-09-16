@@ -16,7 +16,7 @@
  
  	/* Copy the trailing reply_len bytes of the response. */
  	if (!ret && reply)
-@@ -633,6 +635,9 @@ static int airoha_npu_probe(struct platf
+@@ -635,6 +637,9 @@ static int airoha_npu_probe(struct platf
  	npu->ops.wlan_enable_irq = airoha_npu_wlan_irq_enable;
  	npu->ops.wlan_disable_irq = airoha_npu_wlan_irq_disable;
  

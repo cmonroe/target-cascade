@@ -128,7 +128,7 @@ total CPU usage.
  	}
  
  	/* Indicates CDM to parse the MTK special tag from CPU
-@@ -6217,10 +6222,7 @@ no_pcs:
+@@ -6216,10 +6221,7 @@ no_pcs:
  
  	mac->phylink = phylink;
  

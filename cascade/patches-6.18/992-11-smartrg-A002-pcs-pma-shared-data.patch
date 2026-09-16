@@ -22,15 +22,15 @@ functions.
 +};
 --- a/drivers/net/pcs/airoha/pcs-airoha-common.c
 +++ b/drivers/net/pcs/airoha/pcs-airoha-common.c
-@@ -17,6 +17,7 @@
- #include <linux/rtnetlink.h>
+@@ -16,6 +16,7 @@
+ #include <linux/reset.h>
  
  #include "pcs-airoha.h"
 +#include "common-phy-shared.h"
  
  static void airoha_pcs_setup_scu_eth(struct airoha_pcs_priv *priv,
  				     phy_interface_t interface)
-@@ -1031,7 +1032,6 @@ static int airoha_pcs_alloc_maps(struct
+@@ -1030,7 +1031,6 @@ static int airoha_pcs_alloc_maps(struct
  	ret = airoha_pcs_init_named_regmap(pdev, "multi_sgmii", &maps->multi_sgmii);
  	if (ret)
  		return ret;
@@ -38,7 +38,7 @@ functions.
  	ret = airoha_pcs_init_named_regmap(pdev, "usxgmii", &maps->usxgmii_pcs);
  	if (ret)
  		return ret;
-@@ -1048,7 +1048,6 @@ static int airoha_pcs_usb_alloc_maps(str
+@@ -1047,7 +1047,6 @@ static int airoha_pcs_usb_alloc_maps(str
  {
  	struct airoha_pcs_maps *maps = &priv->maps[0];
  	int ret;
@@ -47,7 +47,7 @@ functions.
  	if (ret)
  		return ret;
 @@ -1236,6 +1235,7 @@ static int airoha_pcs_probe(struct platf
- 	const struct airoha_pcs_match_data *data;
+ 	struct fwnode_pcs_provider *provider;
  	struct device *dev = &pdev->dev;
  	struct airoha_pcs_priv *priv;
 +	struct airoha_pcs_shared_data *shared;

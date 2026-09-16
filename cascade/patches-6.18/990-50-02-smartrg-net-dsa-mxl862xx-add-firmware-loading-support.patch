@@ -22,73 +22,29 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	help
 --- a/drivers/net/dsa/mxl862xx/mxl862xx-fw.c
 +++ b/drivers/net/dsa/mxl862xx/mxl862xx-fw.c
-@@ -19,8 +19,10 @@
+@@ -112,9 +112,11 @@
  #include <linux/crc32.h>
  #include <linux/delay.h>
  #include <linux/device.h>
 +#include <linux/firmware.h>
+ #include <linux/iopoll.h>
  #include <linux/module.h>
  #include <linux/netdevice.h>
 +#include <linux/of.h>
+ #include <linux/overflow.h>
  #include <linux/rtnetlink.h>
- #include <net/dsa.h>
- 
-@@ -58,6 +60,13 @@
- #define MXL862XX_FW_WRITE_TIMEOUT_MS	120000	/* per-slice program timeout */
- #define MXL862XX_FW_REBOOT_DELAY_MS	5000
- 
-+static void mxl862xx_flash_notify(struct devlink *dl, const char *msg,
-+				  unsigned long done, unsigned long total)
-+{
-+	if (dl)
-+		devlink_flash_update_status_notify(dl, msg, NULL, done, total);
-+}
-+
- static void mxl862xx_sb_pdi_reset(struct mxl862xx_priv *priv)
+ #include <linux/workqueue.h>
+@@ -263,7 +265,8 @@ static int mxl862xx_sb_pdi_flush_last(st
+ static void mxl862xx_flash_notify(struct devlink *dl, const char *status,
+ 				  u32 done, u32 total)
  {
- 	mxl862xx_smdio_write(priv, MXL862XX_SB_PDI_CTRL,
-@@ -185,8 +194,7 @@ static int mxl862xx_flash_firmware(struc
- 	 */
+-	devlink_flash_update_status_notify(dl, status, NULL, done, total);
++	if (dl)
++		devlink_flash_update_status_notify(dl, status, NULL, done, total);
+ }
  
- 	/* Step 2: Reset PDI and wait for bootloader ready */
--	devlink_flash_update_status_notify(dl, "Waiting for bootloader",
--					   NULL, 0, 0);
-+	mxl862xx_flash_notify(dl, "Waiting for bootloader", 0, 0);
- 	mxl862xx_sb_pdi_reset(priv);
- 	ret = mxl862xx_sb_pdi_poll_stat(priv, MXL862XX_SB_PDI_READY,
- 					MXL862XX_FW_READY_TIMEOUT_MS);
-@@ -208,7 +216,7 @@ static int mxl862xx_flash_firmware(struc
- 	}
- 
- 	/* Step 4: Transfer 20-byte header using auto-increment write mode */
--	devlink_flash_update_status_notify(dl, "Erasing flash", NULL, 0, 0);
-+	mxl862xx_flash_notify(dl, "Erasing flash", 0, 0);
- 	mxl862xx_smdio_write(priv, MXL862XX_SB_PDI_CTRL,
- 			     MXL862XX_SB_PDI_CTRL_WR);
- 	for (i = 0; i < MXL862XX_FW_HDR_SIZE / 2; i++) {
-@@ -295,9 +303,8 @@ static int mxl862xx_flash_firmware(struc
- 					     MXL862XX_SB_PDI_CTRL_WR);
- 
- 			if (time_after(jiffies, next_notify)) {
--				devlink_flash_update_status_notify(
--					dl, "Flashing", NULL,
--					idx, payload_size);
-+				mxl862xx_flash_notify(dl, "Flashing",
-+						      idx, payload_size);
- 				next_notify = jiffies +
- 					      msecs_to_jiffies(500);
- 			}
-@@ -313,8 +320,7 @@ static int mxl862xx_flash_firmware(struc
- 		goto end_magic;
- 	}
- 
--	devlink_flash_update_status_notify(dl, "Flashing", NULL,
--					   payload_size, payload_size);
-+	mxl862xx_flash_notify(dl, "Flashing", payload_size, payload_size);
- 
- end_magic:
- 	/* Always send end magic so MCUboot reboots instead of sitting
-@@ -432,3 +438,47 @@ int mxl862xx_devlink_flash_update(struct
+ /* Post-flash reprobe. device_reprobe() detaches the driver -- running
+@@ -1153,3 +1156,64 @@ int mxl862xx_devlink_flash_update(struct
  
  	return ret;
  }
@@ -99,6 +55,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 +	const struct firmware *fw;
 +	const char *fw_name;
 +	u32 fw_version[3];
++	u32 payload_size;
 +	int ret;
 +
 +	if (of_property_read_string(dev->of_node, "firmware-name", &fw_name))
@@ -110,15 +67,27 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 +		return 0;
 +	}
 +
-+	if (priv->fw_version.major == fw_version[0] &&
++	/* A loader still draining an interrupted download cannot take an
++	 * image; the self-heal reprobes once it is at READY and the autoload
++	 * runs again then.
++	 */
++	if (priv->rescue_mode && !READ_ONCE(priv->rescue_ready))
++		return 0;
++
++	if (!priv->rescue_mode &&
++	    priv->fw_version.major == fw_version[0] &&
 +	    priv->fw_version.minor == fw_version[1] &&
 +	    priv->fw_version.revision == fw_version[2])
 +		return 0;
 +
-+	dev_info(dev, "firmware %u.%u.%u running, flashing %u.%u.%u from '%s'\n",
-+		 priv->fw_version.major, priv->fw_version.minor,
-+		 priv->fw_version.revision,
-+		 fw_version[0], fw_version[1], fw_version[2], fw_name);
++	if (priv->rescue_mode)
++		dev_info(dev, "switch in MCUboot rescue mode, flashing %u.%u.%u from '%s'\n",
++			 fw_version[0], fw_version[1], fw_version[2], fw_name);
++	else
++		dev_info(dev, "firmware %u.%u.%u running, flashing %u.%u.%u from '%s'\n",
++			 priv->fw_version.major, priv->fw_version.minor,
++			 priv->fw_version.revision,
++			 fw_version[0], fw_version[1], fw_version[2], fw_name);
 +
 +	ret = request_firmware(&fw, fw_name, dev);
 +	if (ret) {
@@ -127,26 +96,22 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 +		return ret;
 +	}
 +
-+	ret = mxl862xx_flash_firmware(priv, fw, NULL);
++	ret = mxl862xx_flash_validate(priv, fw, &payload_size);
++	if (!ret)
++		ret = mxl862xx_flash_firmware(priv, fw, payload_size, NULL);
 +	release_firmware(fw);
 +	if (ret) {
 +		dev_err(dev, "firmware autoload failed: %pe\n", ERR_PTR(ret));
 +		return ret;
 +	}
 +
++	priv->rescue_mode = false;
++
 +	return mxl862xx_wait_ready(priv->ds);
 +}
 --- a/drivers/net/dsa/mxl862xx/mxl862xx-fw.h
 +++ b/drivers/net/dsa/mxl862xx/mxl862xx-fw.h
-@@ -5,11 +5,14 @@
- 
- #include <net/dsa.h>
- 
-+struct mxl862xx_priv;
-+
- int mxl862xx_devlink_info_get(struct dsa_switch *ds,
- 			      struct devlink_info_req *req,
- 			      struct netlink_ext_ack *extack);
+@@ -16,5 +16,6 @@ int mxl862xx_devlink_info_get(struct dsa
  int mxl862xx_devlink_flash_update(struct dsa_switch *ds,
  				  struct devlink_flash_update_params *params,
  				  struct netlink_ext_ack *extack);
@@ -155,36 +120,14 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  #endif /* __MXL862XX_FW_H */
 --- a/drivers/net/dsa/mxl862xx/mxl862xx.c
 +++ b/drivers/net/dsa/mxl862xx/mxl862xx.c
-@@ -289,7 +289,7 @@ static int mxl862xx_phy_write_c45_mii_bu
- 	return mxl862xx_phy_write_mmd(bus->priv, addr, devadd, regnum, val);
- }
+@@ -1200,6 +1200,10 @@ static int mxl862xx_setup(struct dsa_swi
  
--static int mxl862xx_wait_ready(struct dsa_switch *ds)
-+int mxl862xx_wait_ready(struct dsa_switch *ds)
- {
- 	struct mxl862xx_sys_fw_image_version ver = {};
- 	unsigned long start = jiffies, timeout;
-@@ -1086,6 +1086,12 @@ static int mxl862xx_setup(struct dsa_swi
- 		return ret;
+ 	priv->rescue_mode = rescue;
  
- 	ret = mxl862xx_wait_ready(ds);
-+	if (ret == -ETIMEDOUT)
-+		dev_warn(ds->dev, "proceeding with firmware loading...\n");
-+	else if (ret < 0)
++	ret = mxl862xx_firmware_autoload(priv);
++	if (ret)
 +		return ret;
 +
-+	ret = mxl862xx_firmware_autoload(priv);
- 	if (ret)
- 		return ret;
- 
---- a/drivers/net/dsa/mxl862xx/mxl862xx.h
-+++ b/drivers/net/dsa/mxl862xx/mxl862xx.h
-@@ -11,6 +11,8 @@
- 
- struct mxl862xx_priv;
- 
-+int mxl862xx_wait_ready(struct dsa_switch *ds);
-+
- #define MXL862XX_MAX_PORTS		17
- #define MXL862XX_FIRST_SERDES_PORT	9
- #define MXL862XX_SERDES_SLOTS		4
+ 	if (priv->rescue_mode) {
+ 		if (priv->rescue_ready) {
+ 			dev_warn(ds->dev,

@@ -53,7 +53,7 @@
  	arht_npu_retry_send_msg(npu, ret, val, core->addr, len, func_id);
  
  	/* Copy the trailing reply_len bytes of the response. */
-@@ -468,11 +491,10 @@ static int airoha_npu_wlan_init_memory(s
+@@ -470,11 +493,10 @@ static int airoha_npu_wlan_init_memory(s
  	if (of_property_match_string(npu->dev->of_node, "memory-region-names",
  				     "ba") >= 0) {
  		cmd = WLAN_FUNC_SET_WAIT_DRAM_BA_NODE_ADDR;

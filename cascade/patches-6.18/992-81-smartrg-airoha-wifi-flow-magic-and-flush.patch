@@ -25,7 +25,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/airoha/airoha_eth.h
 +++ b/drivers/net/ethernet/airoha/airoha_eth.h
-@@ -590,6 +590,7 @@ enum magic {
+@@ -591,6 +591,7 @@ enum magic {
  	LAN2 = 4,
  	LAN3 = 5,
  	LAN4 = 6,

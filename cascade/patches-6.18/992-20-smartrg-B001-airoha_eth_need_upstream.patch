@@ -355,7 +355,7 @@
  		config->mac_capabilities = MAC_ASYM_PAUSE | MAC_SYM_PAUSE |
  					   MAC_10 | MAC_100 | MAC_1000 |
  					   MAC_2500FD | MAC_5000FD | MAC_10000FD;
-@@ -3884,10 +3949,13 @@ static int airoha_alloc_gdm_device(struc
+@@ -3880,10 +3945,13 @@ static int airoha_alloc_gdm_device(struc
  	if (err) {
  		if (err == -EPROBE_DEFER)
  			return err;
@@ -370,7 +370,7 @@
  	}
  
  	/* Allowed nbq for EN7581 on GDM3 port are 4 and 5 for PCIE0
-@@ -3944,6 +4012,7 @@ static int airoha_alloc_gdm_port(struct
+@@ -3940,6 +4008,7 @@ static int airoha_alloc_gdm_port(struct
  	if (!port)
  		return -ENOMEM;
  
@@ -378,7 +378,7 @@
  	port->id = id;
  	spin_lock_init(&port->lock);
  	eth->ports[p] = port;
-@@ -4088,6 +4157,9 @@ static int airoha_probe(struct platform_
+@@ -4084,6 +4153,9 @@ static int airoha_probe(struct platform_
  	strscpy(eth->napi_dev->name, "qdma_eth", sizeof(eth->napi_dev->name));
  	platform_set_drvdata(pdev, eth);
  
@@ -388,7 +388,7 @@
  	err = airoha_hw_init(pdev, eth);
  	if (err)
  		goto error_netdev_free;
-@@ -4182,6 +4254,7 @@ static void airoha_remove(struct platfor
+@@ -4178,6 +4250,7 @@ static void airoha_remove(struct platfor
  	airoha_hw_cleanup(eth);
  
  	free_netdev(eth->napi_dev);
@@ -396,7 +396,7 @@
  	platform_set_drvdata(pdev, NULL);
  }
  
-@@ -4246,8 +4319,10 @@ static int airoha_en7581_get_dev_from_sp
+@@ -4242,8 +4315,10 @@ static int airoha_en7581_get_dev_from_sp
  
  	*dev = 0;
  	switch (sport) {
@@ -409,7 +409,7 @@
  		break;
  	case 0x2 ... 0x4:
  		*port = sport - 1;
-@@ -4327,8 +4402,10 @@ static int airoha_an7583_get_dev_from_sp
+@@ -4323,8 +4398,10 @@ static int airoha_an7583_get_dev_from_sp
  
  	*dev = 0;
  	switch (sport) {
@@ -422,7 +422,7 @@
  		break;
  	case 0x2 ... 0x4:
  		*port = sport - 1;
-@@ -4354,11 +4431,36 @@ static const struct airoha_eth_soc_data
+@@ -4350,11 +4427,36 @@ static const struct airoha_eth_soc_data
  	.xsi_rsts_names = en7581_xsi_rsts_names,
  	.num_xsi_rsts = ARRAY_SIZE(en7581_xsi_rsts_names),
  	.num_ppe = 2,
@@ -483,7 +483,7 @@
  #define IRQ_QUEUE_LEN(_n)		((_n) ? 1024 : 2048)
  #define TX_DSCP_NUM			1024
  #define RX_DSCP_NUM(_n)			\
-@@ -57,6 +58,8 @@
+@@ -58,6 +59,8 @@
  	 NETIF_F_TSO6 | NETIF_F_IPV6_CSUM |	\
  	 NETIF_F_SG | NETIF_F_TSO | NETIF_F_HW_TC)
  
@@ -492,7 +492,7 @@
  #define PSE_RSV_PAGES			128
  #define PSE_QUEUE_RSV_PAGES		64
  
-@@ -72,7 +75,8 @@
+@@ -73,7 +76,8 @@
  #define MTK_HDR_LEN			4
  #define MTK_HDR_XMIT_TAGGED_TPID_8100	1
  #define MTK_HDR_XMIT_TAGGED_TPID_88A8	2
@@ -502,7 +502,7 @@
  enum {
  	QDMA_INT_REG_IDX0,
  	QDMA_INT_REG_IDX1,
-@@ -103,6 +107,13 @@ enum {
+@@ -104,6 +108,13 @@ enum {
  };
  
  enum {
@@ -516,7 +516,7 @@
  	DEV_STATE_INITIALIZED,
  	DEV_STATE_REGISTERED,
  };
-@@ -141,6 +152,7 @@ enum {
+@@ -142,6 +153,7 @@ enum {
  	FE_PSE_PORT_PPE2,
  	FE_PSE_PORT_GDM4,
  	FE_PSE_PORT_CDM5,
@@ -524,7 +524,7 @@
  	FE_PSE_PORT_DROP = 0xf,
  };
  
-@@ -195,6 +207,17 @@ struct airoha_queue_entry {
+@@ -196,6 +208,17 @@ struct airoha_queue_entry {
  	u16 dma_len;
  };
  
@@ -542,7 +542,7 @@
  struct airoha_queue {
  	struct airoha_qdma *qdma;
  
-@@ -216,6 +239,7 @@ struct airoha_queue {
+@@ -217,6 +240,7 @@ struct airoha_queue {
  	struct sk_buff *skb;
  
  	struct list_head tx_list;
@@ -550,7 +550,7 @@
  };
  
  struct airoha_tx_irq_queue {
-@@ -284,7 +308,17 @@ struct airoha_foe_mac_info_common {
+@@ -285,7 +309,17 @@ struct airoha_foe_mac_info_common {
  	u16 vlan2;
  	u16 dest_mac_lo;
  
@@ -568,7 +568,7 @@
  };
  
  struct airoha_foe_mac_info {
-@@ -293,7 +327,8 @@ struct airoha_foe_mac_info {
+@@ -294,7 +328,8 @@ struct airoha_foe_mac_info {
  	u16 pppoe_id;
  	u16 src_mac_lo;
  
@@ -578,7 +578,7 @@
  };
  
  #define AIROHA_FOE_IB1_UNBIND_PREBIND		BIT(24)
-@@ -334,6 +369,24 @@ struct airoha_foe_mac_info {
+@@ -335,6 +370,24 @@ struct airoha_foe_mac_info {
  #define AIROHA_FOE_METER_GRP3			GENMASK(8, 5)
  #define AIROHA_FOE_METER_GRP2			GENMASK(4, 0)
  
@@ -603,7 +603,7 @@
  struct airoha_foe_bridge {
  	u32 dest_mac_hi;
  
-@@ -343,14 +396,48 @@ struct airoha_foe_bridge {
+@@ -344,14 +397,48 @@ struct airoha_foe_bridge {
  	u32 src_mac_lo;
  
  	u32 ib2;
@@ -655,7 +655,7 @@
  struct airoha_foe_ipv4_tuple {
  	u32 src_ip;
  	u32 dest_ip;
-@@ -374,10 +461,14 @@ struct airoha_foe_ipv4 {
+@@ -375,10 +462,14 @@ struct airoha_foe_ipv4 {
  
  	struct airoha_foe_ipv4_tuple new_tuple;
  
@@ -672,7 +672,7 @@
  	struct airoha_foe_mac_info l2;
  };
  
-@@ -389,10 +480,14 @@ struct airoha_foe_ipv4_dslite {
+@@ -390,10 +481,14 @@ struct airoha_foe_ipv4_dslite {
  	u8 flow_label[3];
  	u8 priority;
  
@@ -690,7 +690,7 @@
  	struct airoha_foe_mac_info l2;
  };
  
-@@ -412,13 +507,16 @@ struct airoha_foe_ipv6 {
+@@ -413,13 +508,16 @@ struct airoha_foe_ipv6 {
  		u32 ports;
  	};
  
@@ -710,7 +710,7 @@
  };
  
  struct airoha_foe_entry {
-@@ -426,6 +524,7 @@ struct airoha_foe_entry {
+@@ -427,6 +525,7 @@ struct airoha_foe_entry {
  		struct {
  			u32 ib1;
  			union {
@@ -718,7 +718,7 @@
  				struct airoha_foe_bridge bridge;
  				struct airoha_foe_ipv4 ipv4;
  				struct airoha_foe_ipv4_dslite dslite;
-@@ -484,6 +583,15 @@ enum airoha_flow_entry_type {
+@@ -485,6 +584,15 @@ enum airoha_flow_entry_type {
  	FLOW_TYPE_L2_SUBFLOW,
  };
  
@@ -734,7 +734,7 @@
  struct airoha_flow_table_entry {
  	union {
  		struct hlist_node list; /* PPE L3 flow entry */
-@@ -499,9 +607,12 @@ struct airoha_flow_table_entry {
+@@ -500,9 +608,12 @@ struct airoha_flow_table_entry {
  	struct airoha_foe_stats64 stats;
  	enum airoha_flow_entry_type type;
  
@@ -748,7 +748,7 @@
  	/* Must be last --ends in a flexible-array member. */
  	struct airoha_foe_entry data;
  };
-@@ -511,10 +622,11 @@ struct airoha_wdma_info {
+@@ -512,10 +623,11 @@ struct airoha_wdma_info {
  	u8 queue;
  	u16 wcid;
  	u8 bss;
@@ -761,7 +761,7 @@
  #define RX_IRQ1_BANK_PIN_MASK			0x7fe00000
  #define RX_IRQ2_BANK_PIN_MASK			0x20
  #define RX_IRQ3_BANK_PIN_MASK			0x40
-@@ -571,10 +683,13 @@ struct airoha_gdm_dev {
+@@ -572,10 +684,13 @@ struct airoha_gdm_dev {
  
  	struct phylink *phylink;
  	struct phylink_config phylink_config;
@@ -775,7 +775,7 @@
  	int id;
  	int users;
  
-@@ -584,6 +699,7 @@ struct airoha_gdm_port {
+@@ -585,6 +700,7 @@ struct airoha_gdm_port {
  	struct metadata_dst *dsa_meta[AIROHA_MAX_DSA_PORTS];
  };
  
@@ -783,7 +783,7 @@
  #define AIROHA_RXD4_PPE_CPU_REASON	GENMASK(20, 16)
  #define AIROHA_RXD4_FOE_ENTRY		GENMASK(15, 0)
  
-@@ -605,6 +721,16 @@ struct airoha_ppe {
+@@ -606,6 +722,16 @@ struct airoha_ppe {
  	struct dentry *debugfs_dir;
  };
  
@@ -800,7 +800,7 @@
  struct airoha_eth_soc_data {
  	u16 version;
  	const char * const *xsi_rsts_names;
-@@ -616,6 +742,49 @@ struct airoha_eth_soc_data {
+@@ -617,6 +743,49 @@ struct airoha_eth_soc_data {
  		int (*get_dev_from_sport)(struct airoha_qdma_desc *desc,
  					  u16 *port, u16 *dev);
  	} ops;
@@ -850,7 +850,7 @@
  };
  
  struct airoha_eth {
-@@ -638,6 +807,13 @@ struct airoha_eth {
+@@ -639,6 +808,13 @@ struct airoha_eth {
  
  	struct airoha_qdma qdma[AIROHA_MAX_NUM_QDMA];
  	struct airoha_gdm_port *ports[AIROHA_MAX_NUM_GDM_PORTS];
@@ -864,7 +864,7 @@
  };
  
  u32 airoha_rr(void __iomem *base, u32 offset);
-@@ -702,9 +878,19 @@ static inline bool airoha_qdma_is_lro_qu
+@@ -703,9 +879,19 @@ static inline bool airoha_qdma_is_lro_qu
  	return !!(AIROHA_RXQ_LRO_EN_MASK & BIT(qid));
  }
  

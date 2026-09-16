@@ -21,7 +21,7 @@ Signed-off-by: Piotr Kubik <piotr.kubik@adtran.com>
 
 --- a/drivers/net/pse-pd/pse_core.c
 +++ b/drivers/net/pse-pd/pse_core.c
-@@ -1896,7 +1896,7 @@ struct pse_control *of_pse_control_get(s
+@@ -1942,7 +1942,7 @@ struct pse_control *of_pse_control_get(s
  	}
  
  	if (!pcdev) {

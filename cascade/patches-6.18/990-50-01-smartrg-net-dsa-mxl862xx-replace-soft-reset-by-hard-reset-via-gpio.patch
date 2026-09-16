@@ -26,7 +26,7 @@ Signed-off-by: Cezary Wilmanski <cezary.wilmanski@adtran.com>
  #include <linux/icmpv6.h>
  #include <linux/if_bridge.h>
  #include <linux/if_vlan.h>
-@@ -4414,6 +4415,11 @@ static int mxl862xx_probe(struct mdio_de
+@@ -4591,6 +4592,11 @@ static int mxl862xx_probe(struct mdio_de
  
  	dev_set_drvdata(dev, ds);
  
@@ -40,22 +40,22 @@ Signed-off-by: Cezary Wilmanski <cezary.wilmanski@adtran.com>
  		set_bit(MXL862XX_FLAG_WORK_STOPPED, &priv->flags);
 --- a/drivers/net/dsa/mxl862xx/mxl862xx.h
 +++ b/drivers/net/dsa/mxl862xx/mxl862xx.h
-@@ -4,6 +4,7 @@
- #define __MXL862XX_H
+@@ -5,6 +5,7 @@
  
  #include <asm/byteorder.h>
+ #include <linux/bitops.h>
 +#include <linux/gpio/consumer.h>
  #include <linux/mdio.h>
+ #include <linux/mutex.h>
  #include <linux/workqueue.h>
- #include <net/dsa.h>
-@@ -389,6 +390,7 @@ struct mxl862xx_fw_version {
+@@ -415,6 +416,7 @@ struct mxl862xx_fw_version {
  struct mxl862xx_priv {
  	struct dsa_switch *ds;
  	struct mdio_device *mdiodev;
 +	struct gpio_desc *reset;
  	struct work_struct crc_err_work;
+ 	struct work_struct rescue_heal_work;
  	unsigned long flags;
- 	enum dsa_tag_protocol tag_proto;
 --- a/drivers/net/dsa/mxl862xx/mxl862xx-host.c
 +++ b/drivers/net/dsa/mxl862xx/mxl862xx-host.c
 @@ -10,6 +10,8 @@
@@ -66,8 +66,8 @@ Signed-off-by: Cezary Wilmanski <cezary.wilmanski@adtran.com>
 +#include <linux/gpio/consumer.h>
  #include <linux/iopoll.h>
  #include <linux/limits.h>
- #include <net/dsa.h>
-@@ -486,9 +488,15 @@ int mxl862xx_reset(struct mxl862xx_priv
+ #include <linux/unaligned.h>
+@@ -498,9 +500,15 @@ int mxl862xx_reset(struct mxl862xx_priv
  {
  	int ret;
  

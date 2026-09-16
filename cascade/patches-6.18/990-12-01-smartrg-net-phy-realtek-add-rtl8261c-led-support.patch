@@ -14,7 +14,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/phy/realtek/realtek_main.c
 +++ b/drivers/net/phy/realtek/realtek_main.c
-@@ -353,6 +353,21 @@ struct rtl8261x_fw_entry {
+@@ -376,6 +376,21 @@ struct rtl8261x_fw_entry {
  
  #define RTL826X_VND2_INSR			0xA43A
  
@@ -36,7 +36,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  MODULE_DESCRIPTION("Realtek PHY driver");
  MODULE_AUTHOR("Johnson Leung");
  MODULE_LICENSE("GPL");
-@@ -372,6 +387,7 @@ struct rtl822x_priv {
+@@ -395,6 +410,7 @@ struct rtl822x_priv {
  struct rtl8261x_priv {
  	const char *fw_name;
  	bool fw_loaded;
@@ -44,7 +44,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  };
  
  static int rtl821x_read_page(struct phy_device *phydev)
-@@ -1813,6 +1829,214 @@ static int rtl8211e_led_hw_control_set(s
+@@ -1836,6 +1852,214 @@ static int rtl8211e_led_hw_control_set(s
  	return ret;
  }
  
@@ -259,7 +259,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static int rtl8211e_config_init(struct phy_device *phydev)
  {
  	u16 val;
-@@ -3956,6 +4180,11 @@ static struct phy_driver realtek_drvs[]
+@@ -4203,6 +4427,11 @@ static struct phy_driver realtek_drvs[]
  		.soft_reset     = genphy_c45_soft_reset,
  		.suspend        = genphy_c45_pma_suspend,
  		.resume         = genphy_c45_pma_resume,

@@ -28,7 +28,7 @@ path, mirroring phylink_disconnect_phy().
 
 --- a/drivers/net/phy/phylink.c
 +++ b/drivers/net/phy/phylink.c
-@@ -2450,10 +2450,29 @@ static int phylink_bringup_phy(struct ph
+@@ -2529,10 +2529,29 @@ static int phylink_bringup_phy(struct ph
  			ret = 0;
  	}
  

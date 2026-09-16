@@ -1,6 +1,6 @@
 --- a/drivers/net/ethernet/airoha/airoha_eth.c
 +++ b/drivers/net/ethernet/airoha/airoha_eth.c
-@@ -3849,6 +3849,7 @@ static int airoha_alloc_gdm_device(struc
+@@ -3845,6 +3845,7 @@ static int airoha_alloc_gdm_device(struc
  				   struct airoha_gdm_port *port,
  				   int nbq, struct device_node *np)
  {
@@ -8,7 +8,7 @@
  	struct net_device *netdev;
  	struct airoha_gdm_dev *dev;
  	u8 index;
-@@ -3862,6 +3863,9 @@ static int airoha_alloc_gdm_device(struc
+@@ -3858,6 +3859,9 @@ static int airoha_alloc_gdm_device(struc
  		return -ENOMEM;
  	}
  

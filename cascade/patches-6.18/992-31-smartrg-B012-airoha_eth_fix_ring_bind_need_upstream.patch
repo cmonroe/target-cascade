@@ -1,6 +1,6 @@
 --- a/drivers/net/ethernet/airoha/airoha_eth.h
 +++ b/drivers/net/ethernet/airoha/airoha_eth.h
-@@ -626,7 +626,7 @@ struct airoha_wdma_info {
+@@ -627,7 +627,7 @@ struct airoha_wdma_info {
  };
  
  /* RX queue to IRQ mapping: BIT(q) in IRQ(n) */

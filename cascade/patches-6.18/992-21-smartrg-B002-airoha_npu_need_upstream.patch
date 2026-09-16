@@ -183,7 +183,7 @@
  {
  	return __airoha_npu_send_msg(npu, func_id, data, len, data, len);
  }
-@@ -483,7 +337,7 @@ out:
+@@ -485,7 +339,7 @@ out:
  	return err;
  }
  
@@ -192,7 +192,7 @@
  				    enum airoha_npu_wlan_set_cmd func_id,
  				    void *data, int data_len, gfp_t gfp)
  {
-@@ -506,7 +360,7 @@ static int airoha_npu_wlan_msg_send(stru
+@@ -508,7 +362,7 @@ static int airoha_npu_wlan_msg_send(stru
  	return err;
  }
  
@@ -201,7 +201,7 @@
  				   enum airoha_npu_wlan_get_cmd func_id,
  				   void *data, int data_len, gfp_t gfp)
  {
-@@ -549,29 +403,63 @@ airoha_npu_wlan_set_reserved_memory(stru
+@@ -551,29 +405,63 @@ airoha_npu_wlan_set_reserved_memory(stru
  					sizeof(val), GFP_KERNEL);
  }
  
@@ -271,7 +271,7 @@
  	if (err)
  		return err;
  
-@@ -584,8 +472,7 @@ static int airoha_npu_wlan_init_memory(s
+@@ -586,8 +474,7 @@ static int airoha_npu_wlan_init_memory(s
  	}
  
  	cmd = WLAN_FUNC_SET_WAIT_IS_FORCE_TO_CPU;

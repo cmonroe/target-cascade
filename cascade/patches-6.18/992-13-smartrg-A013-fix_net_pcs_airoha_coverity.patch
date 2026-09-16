@@ -1,6 +1,6 @@
 --- a/drivers/net/pcs/airoha/pcs-airoha-common.c
 +++ b/drivers/net/pcs/airoha/pcs-airoha-common.c
-@@ -774,6 +774,7 @@ static void airoha_pcs_link_up(struct ph
+@@ -773,6 +773,7 @@ static void airoha_pcs_link_up(struct ph
  
  			switch (speed) {
  			case SPEED_10000:
@@ -8,7 +8,7 @@
  				rate_adapt = AIROHA_PCS_HSGMII_RATE_ADPT_FORCE_RATE_ADAPT_MODE_10000;
  				mode = AIROHA_PCS_USXGMII_MODE_10000;
  				break;
-@@ -814,6 +815,7 @@ static void airoha_pcs_link_up(struct ph
+@@ -813,6 +814,7 @@ static void airoha_pcs_link_up(struct ph
  
  			switch (speed) {
  			case SPEED_1000:
@@ -16,7 +16,7 @@
  				force_speed = AIROHA_PCS_HSGMII_PCS_SGMII_SPD_FORCE_1000;
  				rate_adapt = AIROHA_PCS_HSGMII_PCS_FORCE_RATEADAPT_VAL_1000;
  				break;
-@@ -846,6 +848,7 @@ static void airoha_pcs_link_up(struct ph
+@@ -845,6 +847,7 @@ static void airoha_pcs_link_up(struct ph
  				speed_reg = AIROHA_PCS_LINK_MODE_P0_2_5G;
  				break;
  			case SPEED_1000:
@@ -24,7 +24,7 @@
  				speed_reg = AIROHA_PCS_LINK_MODE_P0_1G;
  				if_mode = AIROHA_PCS_HSGMII_AN_SPEED_FORCE_MODE_1000;
  				ck_gen_mode = AIROHA_PCS_HSGMII_PCS_FORCE_CUR_SGMII_MODE_1000;
-@@ -862,7 +865,8 @@ static void airoha_pcs_link_up(struct ph
+@@ -861,7 +864,8 @@ static void airoha_pcs_link_up(struct ph
  				break;
  			}
  

@@ -12,7 +12,7 @@ Ported from the target-mediatek 990-32 patch of the same name.
 
 --- a/drivers/net/ethernet/airoha/airoha_eth.c
 +++ b/drivers/net/ethernet/airoha/airoha_eth.c
-@@ -4044,9 +4044,14 @@ static int airoha_alloc_gdm_device(struc
+@@ -4040,9 +4040,14 @@ static int airoha_alloc_gdm_device(struc
  		return err;
  
  	err = of_get_ethdev_address(np, netdev);

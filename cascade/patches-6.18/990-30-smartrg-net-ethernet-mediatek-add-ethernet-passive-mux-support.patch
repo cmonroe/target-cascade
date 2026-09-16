@@ -59,7 +59,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 +		 */
 +		return fwnode_phylink_pcs_parse(of_fwnode_handle(mac->pcs_of_node),
  						available_pcs,
- 						&num_available_pcs);
+ 						num_possible_pcs);
  	} else {
 @@ -5239,6 +5243,241 @@ static int mtk_fill_available_pcs(struct
  	return 0;
@@ -311,7 +311,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  
  	/*
  	 * Initialize the DSA user-port queue map to an identity mapping
-@@ -5579,7 +5819,7 @@ static int mtk_setup_legacy_sram(struct
+@@ -5578,7 +5818,7 @@ static int mtk_setup_legacy_sram(struct
  static int mtk_probe(struct platform_device *pdev)
  {
  	struct resource *res = NULL;
@@ -320,7 +320,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	struct mtk_eth *eth;
  	int err, i;
  
-@@ -5806,6 +6046,26 @@ static int mtk_probe(struct platform_dev
+@@ -5805,6 +6045,26 @@ static int mtk_probe(struct platform_dev
  			goto err_free_dev;
  	}
  
@@ -347,7 +347,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	if (eth->soc->offload_version) {
  		u8 ppe_num = eth->soc->ppe_num;
  
-@@ -5865,6 +6125,7 @@ err_unreg_netdev:
+@@ -5864,6 +6124,7 @@ err_unreg_netdev:
  	mtk_unreg_dev(eth);
  err_deinit_ppe:
  	mtk_ppe_deinit(eth);
@@ -355,7 +355,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	mtk_mdio_cleanup(eth);
  err_free_dev:
  	mtk_free_dev(eth);
-@@ -5901,6 +6162,7 @@ static void mtk_remove(struct platform_d
+@@ -5900,6 +6161,7 @@ static void mtk_remove(struct platform_d
  	mtk_cleanup(eth);
  	free_netdev(eth->dummy_dev);
  	mtk_mdio_cleanup(eth);

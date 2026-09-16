@@ -34,7 +34,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		pse_port = FE_PSE_PORT_PPE2;
  	airoha_set_gdm_port_fwd_cfg(eth, REG_GDM_FWD_CFG(port->id),
  				    pse_port);
-@@ -4163,6 +4163,33 @@ static int airoha_register_gdm_devices(s
+@@ -4159,6 +4159,33 @@ static int airoha_register_gdm_devices(s
  
  	set_bit(DEV_STATE_REGISTERED, &eth->state);
  

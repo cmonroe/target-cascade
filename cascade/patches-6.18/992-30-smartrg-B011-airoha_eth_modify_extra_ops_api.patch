@@ -11,7 +11,7 @@
  	msg0 = FIELD_PREP(QDMA_ETH_TXMSG_CHAN_MASK, channel) |
 --- a/drivers/net/ethernet/airoha/airoha_eth.h
 +++ b/drivers/net/ethernet/airoha/airoha_eth.h
-@@ -776,7 +776,7 @@ struct arht_extra_ops {
+@@ -777,7 +777,7 @@ struct arht_extra_ops {
  	void (*set_qdma_regs)(struct airoha_qdma *qdma, struct airoha_eth *eth);
  	void (*set_qbi_fttr_chn)(struct airoha_eth *eth);
  	void (*set_fe_regs)(struct airoha_eth *eth);

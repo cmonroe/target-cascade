@@ -57,7 +57,7 @@
  }
  
  static int airoha_npu_load_firmware(struct device *dev, void __iomem *addr,
-@@ -379,7 +391,7 @@ int airoha_npu_wlan_msg_send(struct airo
+@@ -381,7 +393,7 @@ int airoha_npu_wlan_msg_send(struct airo
  	wlan_data->func_id = func_id;
  	memcpy(wlan_data->d, data, data_len);
  
@@ -66,7 +66,7 @@
  	kfree(wlan_data);
  
  	return err;
-@@ -402,7 +414,7 @@ int airoha_npu_wlan_msg_get(struct airoh
+@@ -404,7 +416,7 @@ int airoha_npu_wlan_msg_get(struct airoh
  	wlan_data->func_id = func_id;
  
  	err = __airoha_npu_send_msg(npu, NPU_FUNC_WIFI, wlan_data, len,

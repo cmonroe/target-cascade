@@ -9,7 +9,7 @@
  
  u32 airoha_rr(void __iomem *base, u32 offset)
  {
-@@ -4158,6 +4160,9 @@ static int airoha_probe(struct platform_
+@@ -4154,6 +4156,9 @@ static int airoha_probe(struct platform_
  	platform_set_drvdata(pdev, eth);
  
  	memset(&eth->extra_ops, 0, sizeof(eth->extra_ops));

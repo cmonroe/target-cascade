@@ -22,7 +22,7 @@ Signed-off-by: Piotr Kubik <piotr.kubik@adtran.com>
 
 --- a/drivers/net/phy/realtek/realtek_main.c
 +++ b/drivers/net/phy/realtek/realtek_main.c
-@@ -508,26 +508,27 @@ static int rtl8261x_get_features(struct
+@@ -531,26 +531,27 @@ static int rtl8261x_get_features(struct
  
  static int rtl8261x_read_status(struct phy_device *phydev)
  {

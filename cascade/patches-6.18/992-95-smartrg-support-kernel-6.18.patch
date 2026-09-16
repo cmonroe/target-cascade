@@ -22,7 +22,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/airoha/airoha_eth.c
 +++ b/drivers/net/ethernet/airoha/airoha_eth.c
-@@ -4049,6 +4049,7 @@ static int airoha_alloc_gdm_device(struc
+@@ -4045,6 +4045,7 @@ static int airoha_alloc_gdm_device(struc
  
  	netdev->dev.of_node = of_node_get(np);
  	dev = netdev_priv(netdev);
@@ -32,7 +32,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	dev->eth = eth;
 --- a/drivers/net/ethernet/airoha/airoha_eth.h
 +++ b/drivers/net/ethernet/airoha/airoha_eth.h
-@@ -671,6 +671,7 @@ struct airoha_gdm_dev {
+@@ -672,6 +672,7 @@ struct airoha_gdm_dev {
  	struct airoha_qdma __rcu *qdma;
  	struct airoha_gdm_port *port;
  	struct airoha_eth *eth;
