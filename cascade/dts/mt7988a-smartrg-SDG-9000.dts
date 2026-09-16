@@ -850,7 +850,7 @@
 
 		status = "okay";
 
-		firmware-version = <1 0 73>;
+		firmware-version = <1 0 85>;
 		firmware-name = "maxlinear/mxl862xxc.bin";
 
 		reset-gpios = <&pio 1 GPIO_ACTIVE_LOW>;
