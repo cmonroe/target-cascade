@@ -12,7 +12,7 @@ Signed-off-by: rakesh chanda <rakesh.chanda@adtran.com>
 @@ -1372,7 +1372,7 @@ static void airoha_get_entry_bind(u32 ms
  								    : LAN_IDX_FROM_SPTAG(sptag);
  		}
- 		airoha_ppe_check_skb(&eth->ppe->dev, q->skb, hash, false);
+ 		airoha_ppe_check_skb(&eth->ppe->dev, q->skb, hash, reason, false);
 -		arht_ppe_multicast_handler(eth->ppe, q->skb);
 +		//arht_ppe_multicast_handler(eth->ppe, q->skb);
  

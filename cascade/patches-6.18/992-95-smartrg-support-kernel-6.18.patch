@@ -32,7 +32,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	dev->eth = eth;
 --- a/drivers/net/ethernet/airoha/airoha_eth.h
 +++ b/drivers/net/ethernet/airoha/airoha_eth.h
-@@ -672,6 +672,7 @@ struct airoha_gdm_dev {
+@@ -664,6 +664,7 @@ struct airoha_gdm_dev {
  	struct airoha_qdma __rcu *qdma;
  	struct airoha_gdm_port *port;
  	struct airoha_eth *eth;
