@@ -33,19 +33,19 @@ Signed-off-by: Hoang Viet Pham <hoang.pham@adtran.com>
 ---
 --- a/drivers/net/ethernet/airoha/airoha_npu.c
 +++ b/drivers/net/ethernet/airoha/airoha_npu.c
-@@ -381,7 +381,7 @@ int airoha_npu_wlan_msg_send(struct air
+@@ -492,7 +492,7 @@ static int airoha_npu_wlan_msg_send(stru
  	struct wlan_mbox_data *wlan_data;
  	int err, len;
-
+ 
 -	len = sizeof(*wlan_data) + data_len;
 +	len = offsetof(struct wlan_mbox_data, d) + data_len;
  	wlan_data = kzalloc(len, gfp);
  	if (!wlan_data)
  		return -ENOMEM;
-@@ -404,7 +410,7 @@ int airoha_npu_wlan_msg_get(struct airo
+@@ -515,7 +515,7 @@ static int airoha_npu_wlan_msg_get(struc
  	struct wlan_mbox_data *wlan_data;
  	int err, len;
-
+ 
 -	len = sizeof(*wlan_data) + data_len;
 +	len = offsetof(struct wlan_mbox_data, d) + data_len;
  	wlan_data = kzalloc(len, gfp);
