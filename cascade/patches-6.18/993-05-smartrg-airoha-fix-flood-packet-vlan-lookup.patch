@@ -1,0 +1,136 @@
+From: Hoang Viet Pham <hoang.pham@adtran.com>
+Date: Mon, 15 Sep 2026 00:00:00 +0700
+Subject: [PATCH] airoha: fix flood-packet FDB lookup ignoring VLAN context
+
+airoha_check_flood_packet() is the last gate in airoha_ppe_tx_handler()
+before airoha_ppe_general_bind() actually binds a flow to the hardware
+PPE FOE entry: it looks up the packet's destination MAC in the bridge
+FDB and only allows the bind when the FDB shows that MAC as reachable
+through the same device the packet is about to egress on.
+
+Both call sites passed a hardcoded vid=0 to this helper's `vid`
+parameter. The function has two internal FDB lookup paths and both
+ignored real VLAN context in favor of that constant:
+
+1. Main path: once the egress device is confirmed to be a bridge port,
+   it looked up br_fdb_find_rcu(br, addr, vid) with vid still 0. On
+   this target br0 is VLAN-aware and every port (lan1-4, wifi5g,
+   w5gM, ...) carries a single PVID-untagged VLAN (4094), so real FDB
+   entries are keyed by vlan 4094, not vlan 0. The lookup with vid=0
+   therefore always missed, regardless of the destination MAC or
+   device, and the function fell through to `return 0` (treat as
+   flood) every time.
+
+2. VLAN fallback path: when the egress device isn't a bridge port but
+   the packet itself carries an 802.1Q tag with no matching VLAN
+   sub-device, the code scans every bridge master in the system for
+   an FDB entry -- again with the same hardcoded vid=0, instead of
+   the VID actually carried in the packet's own VLAN tag.
+
+Both silently blocked hardware PPE binding for any flow whose egress
+faces a bridged client -- LAN or WiFi -- while leaving already-working
+paths (e.g. upstream traffic egressing fport==2/WAN, which returns
+earlier via airoha_tunnel_hook_tx) unaffected. That asymmetry is what
+made "wifi to wan has no bind entries" look wifi-specific: the same
+gate also silently dropped downstream-to-LAN-client binds, but nobody
+had traffic profiling to notice on the wired side.
+
+The right VID differs per path and is only known once the function has
+already done its own device resolution (DSA slave lookup, bridge-port
+check, VLAN-tag-vs-subdevice disambiguation), so pushing this to the
+callers would mean duplicating that resolution logic there instead of
+fixing it once. Drop the now-dead `vid` parameter entirely and resolve
+the correct VID internally at each lookup site instead: the egress
+device's PVID via br_vlan_get_pvid_rcu() for the main (untagged) path,
+and the VID out of the packet's own VLAN tag for the fallback
+(explicitly tagged) path.
+
+Verified on SmartRG SDG-8716v: bridge fdb show reported both a wired
+client (dev lan2, vlan 4094) and a wifi client (dev wifi5g, vlan 4094,
+offload) with real conntrack traffic, yet
+/sys/kernel/debug/airoha-eth/ppe/bind stayed empty for both until the
+main-path fix; airoha_ppe_general_bind() now runs and hardware-binds
+flows in both directions. The VLAN fallback path was not exercised by
+that traffic (untagged PVID 4094) but shares the same hardcoded-vid
+root cause and is fixed on the same basis.
+
+Signed-off-by: Hoang Viet Pham <hoang.pham@adtran.com>
+---
+--- a/drivers/net/ethernet/airoha/arht_ppe.c
++++ b/drivers/net/ethernet/airoha/arht_ppe.c
+@@ -332,7 +332,7 @@
+ 	return dev;
+ }
+ 
+-static int airoha_check_flood_packet(struct sk_buff *skb, u16 vid, u32 tag)
++static int airoha_check_flood_packet(struct sk_buff *skb, u32 tag)
+ {
+ 	struct net_bridge *br;
+ 	struct net_device *dev = NULL, *tmp_dev = NULL;
+@@ -369,7 +369,14 @@
+ 			tmp_dev = arht_get_vlandev(skb);
+ 			if(!tmp_dev){
+ 				struct net_device *br_dev;
++				u16 tag_vid;
++
+ 				addr = skb->data;
++				/* The packet itself carries an 802.1Q tag but no
++				 * matching VLAN sub-device was found; the FDB
++				 * entries were learned under that tag's VID.
++				 */
++				tag_vid = ntohs(vlan_eth_hdr(skb)->h_vlan_TCI) & VLAN_VID_MASK;
+ 				rcu_read_lock();
+ 				for_each_netdev_rcu(dev_net(skb->dev), br_dev) {
+ 					if (!netif_is_bridge_master(br_dev))
+@@ -377,7 +384,7 @@
+ 					struct net_bridge *br_tmp = netdev_priv(br_dev);
+ 					if (!br_tmp)
+ 						continue;
+-					struct net_bridge_fdb_entry *f_tmp = br_fdb_find_rcu(br_tmp, addr, vid);
++					struct net_bridge_fdb_entry *f_tmp = br_fdb_find_rcu(br_tmp, addr, tag_vid);
+ 					if (f_tmp && f_tmp->dst) {
+ 						rcu_read_unlock();
+ 						return 1;
+@@ -404,12 +411,21 @@
+ 	}
+ 
+ 	addr = skb->data;
+-	
++
+ 	rcu_read_lock();
+-	f = br_fdb_find_rcu(br, addr, vid);
++	/* FDB entries are keyed by whatever VID tmp_dev's PVID resolves to
++	 * (0 on a non-VLAN-filtering bridge, the real PVID otherwise) --
++	 * never a caller-supplied constant.
++	 */
++	{
++		u16 pvid = 0;
++
++		br_vlan_get_pvid_rcu(tmp_dev, &pvid);
++		f = br_fdb_find_rcu(br, addr, pvid);
++	}
+ 	if (f && f->dst){
+ 		dev = f->dst->dev;
+-	}	
++	}
+ 	rcu_read_unlock();
+ 
+ 	if (dev && dev == tmp_dev){
+@@ -1302,7 +1318,7 @@
+ {
+ 	if (!airoha_is_pon_point_to_point_mode(skb)) {
+ 		//if not point to ponit mode, need to check mac table in kernel
+-	    if (!airoha_check_flood_packet(skb, 0, pinfo->stag)) {
++	    if (!airoha_check_flood_packet(skb, pinfo->stag)) {
+ 	        return;
+ 	    }
+ 	}
+@@ -1603,7 +1619,7 @@
+ 	}
+ 
+ 	//not flood packet, for bridge wan mode
+-	if (airoha_check_flood_packet(skb, 0, pinfo->stag)) {
++	if (airoha_check_flood_packet(skb, pinfo->stag)) {
+         airoha_ppe_general_bind(glb_eth->ppe, hwe, skb, pinfo, fport);
+ 		spin_unlock_bh(&ppe_lock);
+ 		return 1;

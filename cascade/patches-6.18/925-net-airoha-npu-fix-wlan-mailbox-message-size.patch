@@ -1,0 +1,53 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Hoang Viet Pham <hoang.pham@adtran.com>
+Date: Mon, 15 Sep 2026 00:00:00 +0700
+Subject: [PATCH] net: airoha: npu: fix oversized WLAN mailbox message length
+
+airoha_npu_wlan_msg_send() and airoha_npu_wlan_msg_get() compute the
+mailbox message length as sizeof(*wlan_data) + data_len. struct
+wlan_mbox_data ends in a union whose largest member is
+u8 stats[WLAN_MAX_STATS_SIZE] (4408 bytes), used only by the stats-dump
+command. Because that union sits after the DECLARE_FLEX_ARRAY(u8, d)
+member, sizeof(*wlan_data) always accounts for the largest union
+member, so every ordinary WLAN SET/GET message (band0_oncpu, tx-bufid,
+pkt, tx-pkt, ba, force_to_cpu, ...) computes len == 4416 + data_len.
+
+__airoha_npu_send_msg() rejects any len > AIROHA_NPU_MBOX_SIZE (256,
+matching the size of the coherent bounce buffer allocated per core),
+so every one of these WLAN mailbox commands returns -EINVAL before
+ever touching the mailbox registers. On EN7581 boards this makes
+airoha_npu_wlan_init_memory() fail unconditionally during mt76_npu_init(),
+so NPU WLAN offload never comes up and wifi traffic never gets PPE
+hardware acceleration, even though the NPU firmware loaded fine and
+mt76_npu_check_ppe()/airoha_ppe_get_dev() succeeded.
+
+Use offsetof(struct wlan_mbox_data, d) instead of sizeof(*wlan_data)
+so the computed length only covers the fixed header plus the actual
+payload being sent, not the trailing stats union.
+
+Found and verified on SmartRG SDG-8716v (Airoha AN7581 + MediaTek
+MT7992), where every airoha_npu_wlan_msg_send() call was failing with
+len=4420, err=-22, blocking NPU WLAN offload entirely.
+
+Signed-off-by: Hoang Viet Pham <hoang.pham@adtran.com>
+---
+--- a/drivers/net/ethernet/airoha/airoha_npu.c
++++ b/drivers/net/ethernet/airoha/airoha_npu.c
+@@ -381,7 +381,7 @@ int airoha_npu_wlan_msg_send(struct air
+ 	struct wlan_mbox_data *wlan_data;
+ 	int err, len;
+
+-	len = sizeof(*wlan_data) + data_len;
++	len = offsetof(struct wlan_mbox_data, d) + data_len;
+ 	wlan_data = kzalloc(len, gfp);
+ 	if (!wlan_data)
+ 		return -ENOMEM;
+@@ -404,7 +410,7 @@ int airoha_npu_wlan_msg_get(struct airo
+ 	struct wlan_mbox_data *wlan_data;
+ 	int err, len;
+
+-	len = sizeof(*wlan_data) + data_len;
++	len = offsetof(struct wlan_mbox_data, d) + data_len;
+ 	wlan_data = kzalloc(len, gfp);
+ 	if (!wlan_data)
+ 		return -ENOMEM;
