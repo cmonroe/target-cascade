@@ -1,0 +1,39 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Mon, 21 Sep 2026 12:24:43 -0700
+Subject: [PATCH] net: airoha: do not write a source MAC into an L2B PPE entry
+
+airoha_set_ppe_mac() casts the l2 block of every entry up to the
+DS-Lite type to struct airoha_foe_mac_info. That includes the bridge
+(L2B) type, whose l2 block has only the 16 common bytes and is
+followed by meter and tunnel_mtu. For a bridge entry the function
+wrote the low 16 bits of the source MAC into tunnel_mtu and a PPPoE
+session id into meter.
+
+An L2B entry has no source MAC to program, because the MAC pair is a
+key field. The vendor l2b bind fix added this rule to
+airoha_ppe_foe_entry_prepare() and left the vendor function without
+it. The function now writes the destination MAC only for a bridge
+entry. This affects every bridged flow that the vendor bind paths
+offload.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/arht_ppe.c |    7 +++++++
+ 1 file changed, 7 insertions(+)
+
+--- a/drivers/net/ethernet/airoha/arht_ppe.c
++++ b/drivers/net/ethernet/airoha/arht_ppe.c
+@@ -934,6 +934,13 @@ int airoha_set_ppe_mac(struct airoha_foe
+ 	}
+ 	l2->dest_mac_hi = get_unaligned_be32(dst_mac);
+ 	l2->dest_mac_lo = get_unaligned_be16(dst_mac + 4);
++
++	/* The l2 block of an L2B entry has 16 bytes, so the cast below would
++	 * write over meter and tunnel_mtu. The MAC pair is a key field there.
++	 */
++	if (type == PPE_PKT_TYPE_BRIDGE)
++		return 0;
++
+ 	if (type <= PPE_PKT_TYPE_IPV4_DSLITE) {
+ 		struct airoha_foe_mac_info *mac_info;
+ 		mac_info = (struct airoha_foe_mac_info *)l2;
