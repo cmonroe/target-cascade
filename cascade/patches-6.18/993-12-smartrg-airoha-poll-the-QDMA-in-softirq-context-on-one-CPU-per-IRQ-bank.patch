@@ -1,0 +1,88 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Mon, 21 Sep 2026 09:05:16 -0700
+Subject: [PATCH] net: airoha: poll the QDMA in softirq context, one CPU per IRQ bank
+
+The QDMA NAPI leaves thread mode and runs in softirq context, at the
+exit of the interrupt. This applies to all RX rings and to the TX
+completion NAPIs of both QDMAs. The kernel is built with PREEMPT_NONE
+and HZ=100, so a NAPI kernel thread that wakes up waits for a task
+that runs in kernel mode on the same CPU, and a 128-entry LRO ring
+overflowed in that time while the CPUs had idle time.
+
+Softirq mode alone puts the work of all LRO rings on one CPU: RX
+rings 12 to 15 all belonged to IRQ bank 0, and all bank interrupts
+start on CPU0. RPS cannot spread that load on the PON path: the skb
+reaches the single-queue pon net_device with the ring number as its
+RX queue, so get_rps_cpu() does not steer it. Ring 12 stays on bank
+0, rings 13, 14 and 15 move to banks 1, 2 and 3, and bank n of each
+QDMA gets CPU n as its default affinity. User space can still change
+the affinity.
+
+Bank 1 also serves rings 21 to 30, and banks 2 and 3 also serve
+rings 5 and 6, so that work moves to CPUs 1 to 3 as well. Bank 0
+keeps the TX completions.
+
+irq_set_affinity() is used and not irq_set_affinity_and_hint(),
+because a stored hint must be cleared before the devm release of
+the interrupt. A failed affinity write is logged, because the bank
+then stays on the boot CPU with all the others. The masks get a U
+suffix, because INT_RX0_MASK() shifts them left by 16.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/airoha_eth.c |   12 ++++++++++--
+ drivers/net/ethernet/airoha/airoha_eth.h |    8 ++++----
+ 2 files changed, 14 insertions(+), 6 deletions(-)
+
+--- a/drivers/net/ethernet/airoha/airoha_eth.c
++++ b/drivers/net/ethernet/airoha/airoha_eth.c
+@@ -1717,6 +1717,7 @@ static int airoha_qdma_init_irq_banks(st
+ 		struct airoha_irq_bank *irq_bank = &qdma->irq_banks[i];
+ 		int err, irq_index = 4 * id + i;
+ 		const char *name;
++		unsigned int cpu;
+ 
+ 		spin_lock_init(&irq_bank->irq_lock);
+ 		irq_bank->qdma = qdma;
+@@ -1735,6 +1736,15 @@ static int airoha_qdma_init_irq_banks(st
+ 				       irq_bank);
+ 		if (err)
+ 			return err;
++
++		/* The LRO rings are split over the banks, so one CPU per bank
++		 * keeps their softirq work off a single CPU.
++		 */
++		cpu = cpumask_local_spread(i, NUMA_NO_NODE);
++		err = irq_set_affinity(irq_bank->irq, cpumask_of(cpu));
++		if (err)
++			dev_warn(eth->dev, "irq %d stays on the boot CPU: %d\n",
++				 irq_bank->irq, err);
+ 	}
+ 
+ 	return 0;
+@@ -4313,8 +4323,6 @@ static int airoha_probe(struct platform_
+ 	if (!eth->napi_dev)
+ 		return -ENOMEM;
+ 
+-	/* Enable threaded NAPI by default */
+-	eth->napi_dev->threaded = true;
+ 	strscpy(eth->napi_dev->name, "qdma_eth", sizeof(eth->napi_dev->name));
+ 	platform_set_drvdata(pdev, eth);
+ 
+--- a/drivers/net/ethernet/airoha/airoha_eth.h
++++ b/drivers/net/ethernet/airoha/airoha_eth.h
+@@ -602,10 +602,10 @@ struct airoha_flow_table_entry {
+ };
+ 
+ /* RX queue to IRQ mapping: BIT(q) in IRQ(n) */
+-#define RX_IRQ0_BANK_PIN_MASK			0xfb9f
+-#define RX_IRQ1_BANK_PIN_MASK			0x7fe00000
+-#define RX_IRQ2_BANK_PIN_MASK			0x20
+-#define RX_IRQ3_BANK_PIN_MASK			0x40
++#define RX_IRQ0_BANK_PIN_MASK			0x1b9fU
++#define RX_IRQ1_BANK_PIN_MASK			0x7fe02000U
++#define RX_IRQ2_BANK_PIN_MASK			0x4020U
++#define RX_IRQ3_BANK_PIN_MASK			0x8040U
+ #define RX_IRQ_BANK_PIN_MASK(_n)		\
+ 	(((_n) == 3) ? RX_IRQ3_BANK_PIN_MASK :	\
+ 	 ((_n) == 2) ? RX_IRQ2_BANK_PIN_MASK :	\
