@@ -1,0 +1,132 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Mon, 21 Sep 2026 11:17:59 -0700
+Subject: [PATCH] net: airoha: share the LRO rings between all dynamic IFC sessions
+
+The dynamic IFC code has four ring slots, and it sent every further
+session to RX ring 1. Ring 1 is behind the ring meter. A speed test
+with eight streams got four LRO rings at most, and a session of a
+test that ended keeps its slot until the ageing timer fires, so a
+test that followed at once lost rings to it.
+
+A session that gets no slot now takes an LRO ring in turn. It shares
+the ring with the owner of the slot, which costs ring space but no
+correctness, because a ring can carry more than one flow. Two flows
+on one ring overflow it more often than one flow does.
+
+The slots now start at ring 13 and end at ring 12. Ring 12 shares
+its interrupt, and so its CPU, with the TX completions, so the ACKs
+of one to three upload flows now use a different CPU.
+
+The ring set follows the lro-mask properties of the device tree. An
+IFC rule does not know the ingress side, so a ring is used only if
+it is an LRO ring on both QDMAs. The ethernet driver enables LRO on a
+ring in the mask only if the ring has descriptors, so a ring without
+them is not used either.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/arht_dynamic_ifc.c |   61 ++++++++++++++++++++++---
+ 1 file changed, 55 insertions(+), 6 deletions(-)
+
+--- a/drivers/net/ethernet/airoha/arht_dynamic_ifc.c
++++ b/drivers/net/ethernet/airoha/arht_dynamic_ifc.c
+@@ -89,14 +89,62 @@ static inline ecnt_hook_fn_t difc_get_ho
+ 	return READ_ONCE(__difc_ecnt_hook_fn);
+ }
+ 
++/* Ring 12 shares its interrupt with the TX completions, so it goes last. */
++static int ifc_slot_ring_get(unsigned int slot)
++{
++	return IFC_LRO_RING_START + (slot + 1) % IFC_LRO_RING_NUM;
++}
++
++/* An IFC rule matches on both ingress sides, so the ring must be an LRO
++ * ring on both QDMAs. The ethernet driver enables LRO only on a ring
++ * with descriptors, so a ring without them is not an LRO ring here.
++ */
++static bool ifc_ring_is_lro(int ring)
++{
++	struct airoha_eth *eth = READ_ONCE(glb_eth);
++	int i;
++
++	if (!eth)
++		return false;
++
++	for (i = 0; i < AIROHA_MAX_NUM_QDMA; i++) {
++		struct airoha_queue *q = &eth->qdma[i].q_rx[ring];
++
++		if (!q->ndesc || !airoha_qdma_is_lro_queue(q))
++			return false;
++	}
++
++	return true;
++}
++
++/* The default ring is behind the ring meter, so the sessions that get no
++ * slot share the LRO rings.
++ */
++static int ifc_overflow_ring_get(void)
++{
++	static unsigned int next;
++	int i, ring;
++
++	for (i = 0; i < IFC_LRO_RING_NUM; i++) {
++		ring = ifc_slot_ring_get(next++);
++		if (ifc_ring_is_lro(ring))
++			return ring;
++	}
++
++	return IFC_DEFAULT_RING;
++}
++
+ static int ifc_get_free_lro_ring(int entry_idx)
+ {
+ 	int i;
+ 
+ 	for (i = 0; i < IFC_LRO_RING_NUM; i++) 
+ 	{
++		if (!ifc_ring_is_lro(ifc_slot_ring_get(i)))
++			continue;
++
+ 		if (ifc_ring_reserve[i] == entry_idx){
+-			return (IFC_LRO_RING_START + i);
++			return ifc_slot_ring_get(i);
+ 		}
+ 
+ 		if (ifc_ring_reserve[i] != IFC_RING_SLOT_FREE) 
+@@ -107,21 +155,22 @@ static int ifc_get_free_lro_ring(int ent
+ 				!dynamic_ifc_ety[prev].ifc_valid) 
+ 			{
+ 				ifc_ring_reserve[i] = entry_idx;
+-				return (IFC_LRO_RING_START + i);
++				return ifc_slot_ring_get(i);
+ 			}
+ 		}
+ 	}
+ 
+ 	for (i = 0; i < IFC_LRO_RING_NUM; i++) 
+ 	{
+-		if (ifc_ring_reserve[i] == IFC_RING_SLOT_FREE) 
++		if (ifc_ring_reserve[i] == IFC_RING_SLOT_FREE &&
++		    ifc_ring_is_lro(ifc_slot_ring_get(i)))
+ 		{
+ 			ifc_ring_reserve[i] = entry_idx;
+-			return (IFC_LRO_RING_START + i);
++			return ifc_slot_ring_get(i);
+ 		}
+ 	}
+ 
+-	return IFC_DEFAULT_RING;
++	return ifc_overflow_ring_get();
+ }
+ 
+ /* Release ring reservation */
+@@ -139,7 +188,7 @@ static void ifc_release_lro_ring(int ent
+ 	}
+ }
+ 
+-/* Create IFC rule for a data session. First 4 data sessions get ring 12~15, rest get ring 1 (default).
++/* Create IFC rule for a data session. First 4 data sessions get ring 12~15, the rest share these rings.
+  *
+  * NOTE: This function is called under dynamic_ifc_lock (spinlock_irqsave).
+  * All IFC API functions used herein (DIFC_API_SET_LUT_RULE_AUTO,
