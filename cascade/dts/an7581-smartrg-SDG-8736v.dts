@@ -525,15 +525,15 @@
 	 * If there is no config in DTS, driver will use default configuration.
 	 */
 	rx-dscp-lan = <1024 256 128 128 256 16 128 128
-				   128 128 16 256 128 16 16 128
+				   128 128 16 256 128 128 128 128
 				   16 16 16 16 16 16 16 16
 				   16 16 16 16 16 16 16 16>;
 	rx-dscp-wan = <1024 256 128 128 256 16 128 128
-				   128 128 16 256 16 16 16 128
+				   128 128 16 256 128 128 128 128
 				   16 16 16 16 16 16 16 16
 				   16 16 16 16 16 16 16 16>;
-	lro-mask-lan = <0x01>;
-	lro-mask-wan = <0x00>;
+	lro-mask-lan = <0x0f>;
+	lro-mask-wan = <0x0f>;
 	nvmem-cells = <&macaddr 0x0>;
 	nvmem-cell-names = "mac";
 	status = "okay";
