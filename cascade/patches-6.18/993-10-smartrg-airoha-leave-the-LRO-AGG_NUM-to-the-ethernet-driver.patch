@@ -1,0 +1,301 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Mon, 21 Sep 2026 10:39:17 -0700
+Subject: [PATCH] net: airoha: leave the LRO AGG_NUM to the ethernet driver
+
+The AGG_NUM field of REG_CDM_LRO_LIMIT had three writers. The
+ethernet driver writes 64 when HW GRO goes on and 0 when it goes off.
+The dynamic IFC code and the wifi local fastpath each wrote 18 at the
+start of a session and restored a private saved copy later, the
+dynamic IFC code from an ageing timer. The value in the hardware then
+depended on the order of these events, and a restore of a copy saved
+while HW GRO was off wrote 0 into an enabled engine.
+
+The ethernet driver is now the only writer, so AGG_NUM is 64 while
+HW GRO is on. The vendor value of 18 is dropped and not moved,
+because it has no effect at the present LRO buffer size: AGG_SIZE is
+16000 bytes, which is about 11 segments. If the LRO buffers grow, 64
+becomes reachable and the value needs a new look.
+
+The agg_num command and the lro_agg_num line leave both /proc files,
+so that they do not report a value that is not in the hardware.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/arht_dynamic_ifc.c |   78 ---------------------
+ drivers/net/ethernet/airoha/arht_wifi_lo.c     |   89 -------------------------
+ 2 files changed, 2 insertions(+), 165 deletions(-)
+
+--- a/drivers/net/ethernet/airoha/arht_dynamic_ifc.c
++++ b/drivers/net/ethernet/airoha/arht_dynamic_ifc.c
+@@ -57,11 +57,6 @@ static int debug_level = DEBUG_LEVEL_NON
+ static int dynamic_ifc_enable = 0;
+ static int ifc_ring_reserve[IFC_LRO_RING_NUM];
+ 
+-static u32 lro_agg_num_orig_cdm1 = 0;
+-static u32 lro_agg_num_orig_cdm2 = 0;
+-static bool lro_agg_num_saved = false;
+-static int lro_agg_num = LRO_AGG_NUM_DEFAULT;
+-
+ static struct dynamic_ifc dynamic_ifc_ety[MAX_DYNAMIC_IFC_NUM];
+ static char dynamic_ifc_apps[MAX_DYNAMIC_IFC_APP_NUM][TASK_COMM_LEN] = {0};
+ static int dynamic_ifc_app_valid[MAX_DYNAMIC_IFC_APP_NUM] = {0};
+@@ -259,52 +254,6 @@ clear_state:
+ 	ifc_release_lro_ring(lo - dynamic_ifc_ety);
+ }
+ 
+-static void lro_save_and_set_agg_num(int agg_num)
+-{
+-	struct airoha_eth *eth;
+-
+-	if (lro_agg_num_saved) {
+-		return;
+-	}
+-
+-	eth = READ_ONCE(glb_eth);
+-	if (!eth || !eth->fe_regs) {
+-		pr_warn_ratelimited("arht_dynamic_ifc: glb_eth not ready\n");
+-		return;
+-	}
+-
+-	/* Save original agg_num values */
+-	lro_agg_num_orig_cdm1 = FIELD_GET(CDM_LRO_AGG_NUM_MASK, airoha_fe_rr(eth, REG_CDM_LRO_LIMIT(1)));
+-	lro_agg_num_orig_cdm2 = FIELD_GET(CDM_LRO_AGG_NUM_MASK, airoha_fe_rr(eth, REG_CDM_LRO_LIMIT(2)));
+-
+-	lro_agg_num_saved = true;
+-
+-	/* Set new agg_num for both CDM1 and CDM2 */
+-	airoha_fe_rmw(eth, REG_CDM_LRO_LIMIT(1), CDM_LRO_AGG_NUM_MASK, FIELD_PREP(CDM_LRO_AGG_NUM_MASK, agg_num));
+-	airoha_fe_rmw(eth, REG_CDM_LRO_LIMIT(2), CDM_LRO_AGG_NUM_MASK, FIELD_PREP(CDM_LRO_AGG_NUM_MASK, agg_num));
+-}
+-
+-static void lro_restore_agg_num(void)
+-{
+-	struct airoha_eth *eth;
+-
+-	if (!lro_agg_num_saved) {
+-		return;
+-	}
+-
+-	eth = READ_ONCE(glb_eth);
+-	if (!eth || !eth->fe_regs) {
+-		pr_warn_ratelimited("arht_dynamic_ifc: glb_eth not ready\n");
+-		return;
+-	}
+-
+-	/* Restore original agg_num for both CDM1 and CDM2 */
+-	airoha_fe_rmw(eth, REG_CDM_LRO_LIMIT(1), CDM_LRO_AGG_NUM_MASK, FIELD_PREP(CDM_LRO_AGG_NUM_MASK, lro_agg_num_orig_cdm1));
+-	airoha_fe_rmw(eth, REG_CDM_LRO_LIMIT(2), CDM_LRO_AGG_NUM_MASK, FIELD_PREP(CDM_LRO_AGG_NUM_MASK, lro_agg_num_orig_cdm2));
+-
+-	lro_agg_num_saved = false;
+-}
+-
+ static int is_dynamic_ifc_app(char * name)
+ {
+ 	int i;
+@@ -414,12 +363,10 @@ static struct dynamic_ifc* find_dynamic_
+ static void dynamic_ifc_timeout(struct timer_list *arg)
+ {
+ 	struct dynamic_ifc *e = timer_container_of(e, arg, age_timer);
+-	int i;
+ 	unsigned long flags;
+ 	struct sock *sk_to_release = NULL;
+ 	struct dst_entry *tx_dst_to_release = NULL;
+ 	struct dst_entry *rx_dst_to_release = NULL;
+-	bool has_active_session = false;
+ 
+ 	spin_lock_irqsave(&dynamic_ifc_lock, flags);
+ 	if (!e->valid) {
+@@ -455,17 +402,6 @@ static void dynamic_ifc_timeout(struct t
+ 	}
+ 	e->valid = 0;
+ 
+-	for (i = 0; i < MAX_DYNAMIC_IFC_NUM; i++) 
+-	{
+-		if (dynamic_ifc_ety[i].valid) {
+-			has_active_session = true;
+-			break;
+-		}
+-	}
+-
+-	if (!has_active_session) {
+-		lro_restore_agg_num();
+-	}
+ 	spin_unlock_irqrestore(&dynamic_ifc_lock, flags);
+ 
+ 	if (sk_to_release)
+@@ -676,7 +612,6 @@ void difc_add_entry_from_sock(struct soc
+ 			lo->ring_id = 0;
+ 			lo->timer_active = 1;
+ 
+-			lro_save_and_set_agg_num(READ_ONCE(lro_agg_num));
+ 			timer_setup(&lo->age_timer, dynamic_ifc_timeout, 0);
+ 			mod_timer(&lo->age_timer, jiffies + EXPIRE_TIME);
+ 			smp_wmb();
+@@ -934,7 +869,6 @@ static void dynamic_ifc_cleanup_all_sess
+ 		lo->skip_copy = 0;
+ 	}
+ 
+-	lro_restore_agg_num();
+ 	spin_unlock_irqrestore(&dynamic_ifc_lock, flags);
+ 
+ 	for (i = 0; i < MAX_DYNAMIC_IFC_NUM; i++) {
+@@ -954,7 +888,6 @@ static int dynamic_ifc_seq_show(struct s
+ 	unsigned long flags;
+ 
+ 	seq_printf(m, "arht_dynamic_ifc: %s\n", READ_ONCE(dynamic_ifc_enable) ? "enabled" : "disabled");
+-	seq_printf(m, "lro_agg_num: %d (default: %d)\n", lro_agg_num, LRO_AGG_NUM_DEFAULT);
+ 
+ 	seq_printf(m, "Apps: ");
+ 	spin_lock_irqsave(&dynamic_ifc_lock, flags);
+@@ -1089,17 +1022,6 @@ static ssize_t dynamic_ifc_write_proc(st
+ 			}
+ 			pr_info("arht_dynamic_ifc: debug_level = %d\n", debug_level);
+ 		}
+-	} else if (!strcmp(cmd, "agg_num")) {
+-		if (sscanf(str, "%31s %d", cmd, &val) == 2) {
+-			if (val < LRO_AGG_NUM_MIN || val > LRO_AGG_NUM_MAX) {
+-				pr_err("arht_dynamic_ifc: agg_num out of range [%d, %d]\n", LRO_AGG_NUM_MIN, LRO_AGG_NUM_MAX);
+-			} else {
+-				WRITE_ONCE(lro_agg_num, val);
+-				pr_info("arht_dynamic_ifc: lro_agg_num = %d\n", lro_agg_num);
+-			}
+-		} else {
+-			pr_info("arht_dynamic_ifc: current lro_agg_num = %d\n", lro_agg_num);
+-		}
+ 	} else {
+ 		/* Original format: "1 iperf3" or "0 iperf3" - add/del app */
+ 		val = 0;
+--- a/drivers/net/ethernet/airoha/arht_wifi_lo.c
++++ b/drivers/net/ethernet/airoha/arht_wifi_lo.c
+@@ -51,11 +51,6 @@
+  * -------------------------------------------------------------------------
+  */
+ 
+-static u32 lro_agg_num_orig_cdm1;
+-static u32 lro_agg_num_orig_cdm2;
+-static bool lro_agg_num_saved;
+-static int lro_agg_num = LRO_AGG_NUM_DEFAULT;
+-
+ static struct wifi_lo wifi_lo_ety[WIFI_LO_MAX_NUM];
+ 
+ /*
+@@ -125,58 +120,6 @@ static bool wifi_lo_wifi_only = true;
+ 
+ /*
+  * -------------------------------------------------------------------------
+- *   LRO aggregation-num register save/restore
+- * -------------------------------------------------------------------------
+- */
+-
+-static void wifi_lo_lro_save_and_set_agg_num(int agg_num)
+-{
+-	u32 val;
+-
+-	if (lro_agg_num_saved)
+-		return;
+-
+-	val = get_frame_engine_data(PHY_REG_CDM1_LRO_LIMIT);
+-	lro_agg_num_orig_cdm1 = (val & CDM_LRO_AGG_NUM_MASK_VAL) >> CDM_LRO_AGG_NUM_SHIFT;
+-
+-	val = get_frame_engine_data(PHY_REG_CDM2_LRO_LIMIT);
+-	lro_agg_num_orig_cdm2 = (val & CDM_LRO_AGG_NUM_MASK_VAL) >> CDM_LRO_AGG_NUM_SHIFT;
+-
+-	lro_agg_num_saved = true;
+-
+-	val = get_frame_engine_data(PHY_REG_CDM1_LRO_LIMIT);
+-	val &= ~CDM_LRO_AGG_NUM_MASK_VAL;
+-	val |= ((u32)agg_num << CDM_LRO_AGG_NUM_SHIFT) & CDM_LRO_AGG_NUM_MASK_VAL;
+-	set_frame_engine_data(PHY_REG_CDM1_LRO_LIMIT, val);
+-
+-	val = get_frame_engine_data(PHY_REG_CDM2_LRO_LIMIT);
+-	val &= ~CDM_LRO_AGG_NUM_MASK_VAL;
+-	val |= ((u32)agg_num << CDM_LRO_AGG_NUM_SHIFT) & CDM_LRO_AGG_NUM_MASK_VAL;
+-	set_frame_engine_data(PHY_REG_CDM2_LRO_LIMIT, val);
+-}
+-
+-static void wifi_lo_lro_restore_agg_num(void)
+-{
+-	u32 val;
+-
+-	if (!lro_agg_num_saved)
+-		return;
+-
+-	val = get_frame_engine_data(PHY_REG_CDM1_LRO_LIMIT);
+-	val &= ~CDM_LRO_AGG_NUM_MASK_VAL;
+-	val |= (lro_agg_num_orig_cdm1 << CDM_LRO_AGG_NUM_SHIFT) & CDM_LRO_AGG_NUM_MASK_VAL;
+-	set_frame_engine_data(PHY_REG_CDM1_LRO_LIMIT, val);
+-
+-	val = get_frame_engine_data(PHY_REG_CDM2_LRO_LIMIT);
+-	val &= ~CDM_LRO_AGG_NUM_MASK_VAL;
+-	val |= (lro_agg_num_orig_cdm2 << CDM_LRO_AGG_NUM_SHIFT) & CDM_LRO_AGG_NUM_MASK_VAL;
+-	set_frame_engine_data(PHY_REG_CDM2_LRO_LIMIT, val);
+-
+-	lro_agg_num_saved = false;
+-}
+-
+-/*
+- * -------------------------------------------------------------------------
+  *   App-list helpers (RCU snapshot; (6))
+  * -------------------------------------------------------------------------
+  */
+@@ -798,16 +741,8 @@ static void wifi_lo_timeout(struct timer
+ 
+ 	spin_unlock_bh(&wifi_lo_lock);
+ 
+-	/* Decrement the active-session counter; if this was the last live
+-	 * session and DIFC didn't claim it, restore the LRO knob. */
+-	if (atomic_dec_return(&wifi_lo_active_num) == 0) {
++	if (atomic_dec_return(&wifi_lo_active_num) == 0)
+ 		schedule_work(&wifi_lo_active_sync);	/* flip key -> off */
+-		if (!difc_active) {
+-			spin_lock_bh(&wifi_lo_lock);
+-			wifi_lo_lro_restore_agg_num();
+-			spin_unlock_bh(&wifi_lo_lock);
+-		}
+-	}
+ 
+ 	if (dst_to_release)
+ 		dst_release(dst_to_release);
+@@ -881,8 +816,6 @@ static void wifi_lo_add_ety(struct sk_bu
+ 		smp_wmb();
+ 		set_bit(WIFI_LO_F_VALID, &lo->flags);
+ 
+-		wifi_lo_lro_save_and_set_agg_num(lro_agg_num);
+-
+ 		timer_setup(&lo->age_timer, wifi_lo_timeout, 0);
+ 		mod_timer(&lo->age_timer,
+ 		          jiffies + WIFI_LO_EXPIRE_TIME);
+@@ -1095,8 +1028,6 @@ static ssize_t wifi_lo_proc_read(struct
+ 
+ 	remain = WIFI_LO_PROC_BUFSZ;
+ 
+-	APPEND("lro_agg_num: %d (default: %d)\n",
+-	       lro_agg_num, LRO_AGG_NUM_DEFAULT);
+ 	APPEND("wifi_only: %d\n", READ_ONCE(wifi_lo_wifi_only) ? 1 : 0);
+ 	APPEND("active_sessions: %d\n", atomic_read(&wifi_lo_active_num));
+ 
+@@ -1158,23 +1089,7 @@ static ssize_t wifi_lo_proc_write(struct
+ 	if (sscanf(str, "%31s", cmd) < 1)
+ 		return -EINVAL;
+ 
+-	if (!strcmp(cmd, "agg_num")) {
+-		if (sscanf(str, "%31s %d", cmd, &val) == 2) {
+-			if (val < LRO_AGG_NUM_MIN ||
+-			    val > LRO_AGG_NUM_MAX) {
+-				pr_err("wifi_lo: agg_num out of range [%d, %d]\n",
+-				       LRO_AGG_NUM_MIN,
+-				       LRO_AGG_NUM_MAX);
+-			} else {
+-				lro_agg_num = val;
+-				pr_info("wifi_lo: lro_agg_num = %d\n",
+-				        lro_agg_num);
+-			}
+-		} else {
+-			pr_info("wifi_lo: current lro_agg_num = %d\n",
+-			        lro_agg_num);
+-		}
+-	} else if (!strcmp(cmd, "wifi_only")) {
++	if (!strcmp(cmd, "wifi_only")) {
+ 		if (sscanf(str, "%31s %d", cmd, &val) == 2) {
+ 			WRITE_ONCE(wifi_lo_wifi_only, !!val);
+ 			pr_info("wifi_lo: wifi_only = %d\n", !!val);
