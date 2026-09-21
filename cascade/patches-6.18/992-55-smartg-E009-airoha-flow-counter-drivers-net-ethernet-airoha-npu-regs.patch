@@ -1,0 +1,10 @@
+--- a/drivers/net/ethernet/airoha/airoha_regs.h
++++ b/drivers/net/ethernet/airoha/airoha_regs.h
+@@ -989,6 +989,7 @@ struct airoha_qdma_fwd_desc {
+ 
+ #define PSE_FC_CFG						(0x0098)
+ #define PSE_PORT7_SHARE_DIS				BIT(23)
++#define PSE_PORT6_SHARE_DIS				BIT(22)
+ #define FE_RESET_GLO					(0x0004)
+ #define REG_FE_CORE_RESET					BIT(0)
+ #define GDM4_MBI_ARB_RX_RST	            GENMASK(9, 8)

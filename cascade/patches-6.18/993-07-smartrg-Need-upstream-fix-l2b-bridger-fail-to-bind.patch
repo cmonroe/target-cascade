@@ -1,0 +1,470 @@
+--- a/drivers/net/ethernet/airoha/airoha_eth.h
++++ b/drivers/net/ethernet/airoha/airoha_eth.h
+@@ -388,37 +388,20 @@ struct action_info {
+ 	u32 act_dp:8;	/* UDF */
+ };
+ 
++/* Upstream definition of l2b ppe entry is not matching hardware layout.
++ * Fix as per hardware layout and improve definition
++ */
+ struct airoha_foe_bridge {
+ 	u32 dest_mac_hi;
+ 
+-	u16 src_mac_hi;
+-	u16 dest_mac_lo;
+-
+-	u32 src_mac_lo;
+-
+-	u32 ib2;
+-	struct hop_info hop;
+-
+-	u32 rsv[4];
+-
+-	union{
+-		struct action_info action;
+-		u32 data;
+-	};
+-	struct airoha_foe_mac_info l2;
+-};
+-
+-struct airoha_foe_bridge32 {
+-	u32 dest_mac_hi;
+-
+-	u16 in_vlan;
++	u16 hsk_l2_h;
+ 	u16 dest_mac_lo;
+ 
+ 	u32 info_hsk_l2;
+ 
+ 	u32 src_mac_hi;
+ 
+-	u16 sptag;
++	u16 pad;
+ 	u16 src_mac_lo;
+ 
+ 	u32 rsv1[2];
+@@ -525,7 +508,6 @@ struct airoha_foe_entry {
+ 		struct {
+ 			u32 ib1;
+ 			union {
+-				struct airoha_foe_bridge32 bridge32;
+ 				struct airoha_foe_bridge bridge;
+ 				struct airoha_foe_ipv4 ipv4;
+ 				struct airoha_foe_ipv4_dslite dslite;
+--- a/drivers/net/ethernet/airoha/airoha_ppe.c
++++ b/drivers/net/ethernet/airoha/airoha_ppe.c
+@@ -35,7 +35,10 @@ static const struct rhashtable_params ai
+ static const struct rhashtable_params airoha_l2_flow_table_params = {
+ 	.head_offset = offsetof(struct airoha_flow_table_entry, l2_node),
+ 	.key_offset = offsetof(struct airoha_flow_table_entry, data.bridge),
+-	.key_len = 2 * ETH_ALEN,
++	/* the key spans dest_mac_hi..src_mac_lo; the hardware's own key words sit
++	 * in between and stay zero in software
++	 */
++	.key_len = offsetofend(struct airoha_foe_bridge, src_mac_lo),
+ 	.automatic_shrinking = true,
+ };
+ 
+@@ -337,8 +340,8 @@ static void airoha_ppe_foe_set_bridge_ad
+ {
+ 	br->dest_mac_hi = get_unaligned_be32(eh->h_dest);
+ 	br->dest_mac_lo = get_unaligned_be16(eh->h_dest + 4);
+-	br->src_mac_hi = get_unaligned_be16(eh->h_source);
+-	br->src_mac_lo = get_unaligned_be32(eh->h_source + 2);
++	br->src_mac_hi = get_unaligned_be32(eh->h_source);
++	br->src_mac_lo = get_unaligned_be16(eh->h_source + 4);
+ }
+ 
+ static int airoha_ppe_foe_entry_prepare(struct airoha_eth *eth,
+@@ -363,7 +366,8 @@ static int airoha_ppe_foe_entry_prepare(
+ 	      AIROHA_FOE_IB1_BIND_TTL;
+ 	hwe->ib1 = val;
+ 
+-	val = FIELD_PREP(AIROHA_FOE_IB2_PORT_AG, 0x1f);
++	/* PORT_AG is 11 bits wide: 0x1f selects group 31, not "no group" */
++	val = FIELD_PREP(AIROHA_FOE_IB2_PORT_AG, 0x7ff);
+ 	if (netdev) {
+ 		struct airoha_wdma_info info = {};
+ 
+@@ -443,7 +447,7 @@ static int airoha_ppe_foe_entry_prepare(
+ 		airoha_ppe_foe_set_bridge_addrs(&hwe->bridge, &data->eth);
+ 		hwe->bridge.data = qdata;
+ 		hwe->bridge.ib2 = val;
+-		l2 = &hwe->bridge.l2.common;
++		l2 = &hwe->bridge.l2;
+ 	} else if (type >= PPE_PKT_TYPE_IPV6_ROUTE_3T) {
+ 		hwe->ipv6.data = qdata;
+ 		hwe->ipv6.ib2 = val;
+@@ -462,7 +466,12 @@ static int airoha_ppe_foe_entry_prepare(
+ 	} else {
+ 		l2->dest_mac_hi = get_unaligned_be32(data->eth.h_dest);
+ 		l2->dest_mac_lo = get_unaligned_be16(data->eth.h_dest + 4);
+-		if (type <= PPE_PKT_TYPE_IPV4_DSLITE) {
++		if (type == PPE_PKT_TYPE_BRIDGE) {
++			/* L2B has no source mac to program: the matched pair is
++			 * a key field, and this block is only 16 bytes, so the
++			 * mac_info cast below would write over meter
++			 */
++		} else if (type <= PPE_PKT_TYPE_IPV4_DSLITE) {
+ 			struct airoha_foe_mac_info *mac_info;
+ 
+ 			l2->src_mac_hi = get_unaligned_be32(data->eth.h_source);
+@@ -584,16 +593,14 @@ u32 airoha_ppe_foe_get_entry_hash(struct
+ 		hv3 ^= hwe->ipv6.src_ip[0];
+ 		break;
+ 	case PPE_PKT_TYPE_BRIDGE: {
+-		struct airoha_foe_mac_info *l2 = &hwe->bridge.l2;
++		struct airoha_foe_bridge *br = &hwe->bridge;
+ 
+-		hv1 = l2->common.src_mac_hi & 0xffff;
+-		hv1 = hv1 << 16 | l2->src_mac_lo;
++		hv1 = br->src_mac_hi;
+ 
+-		hv2 = l2->common.dest_mac_lo;
+-		hv2 = hv2 << 16;
+-		hv2 = hv2 | ((l2->common.src_mac_hi & 0xffff0000) >> 16);
++		hv2 = br->dest_mac_lo;
++		hv2 = hv2 << 16 | br->src_mac_lo;
+ 
+-		hv3 = l2->common.dest_mac_hi;
++		hv3 = br->dest_mac_hi;
+ 		break;
+ 	}
+ 	case PPE_PKT_TYPE_IPV4_DSLITE:
+@@ -671,7 +678,7 @@ static void airoha_ppe_foe_flow_stats_up
+ 	if (type == PPE_PKT_TYPE_BRIDGE) {
+ 		data = &hwe->bridge.data;
+ 		ib2 = &hwe->bridge.ib2;
+-		meter = (u32 *)&hwe->bridge.l2.meter;
++		meter = (u32 *)&hwe->bridge.meter;
+ 	} else if (type >= PPE_PKT_TYPE_IPV6_ROUTE_3T) {
+ 		data = &hwe->ipv6.data;
+ 		ib2 = &hwe->ipv6.ib2;
+@@ -902,19 +909,34 @@ airoha_ppe_foe_commit_subflow_entry(stru
+ 	memcpy(&hwe, hwe_p, sizeof(*hwe_p));
+ 	hwe.ib1 = (hwe.ib1 & mask) | (e->data.ib1 & ~mask);
+ 
++	/* Graft l2 and ib2 onto the entry the parser learned. bridge no longer
++	 * shares ipv4's offsets, so each type has to name its own members. The
++	 * key fields and meter are left as the hardware has them.
++	 */
+ 	type = FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, hwe.ib1);
+ 	if (type >= PPE_PKT_TYPE_IPV6_ROUTE_3T) {
+-		memcpy(&hwe.ipv6.l2, &e->data.bridge.l2, sizeof(hwe.ipv6.l2));
++		hwe.ipv6.l2 = e->data.bridge.l2;
+ 		hwe.ipv6.ib2 = e->data.bridge.ib2;
+ 		/* setting smac_id to 0xf instruct the hw to keep original
+ 		 * source mac address
+ 		 */
+ 		hwe.ipv6.l2.src_mac_hi = FIELD_PREP(AIROHA_FOE_MAC_SMAC_ID,
+ 						    0xf);
+-	} else {
+-		memcpy(&hwe.bridge.l2, &e->data.bridge.l2,
+-		       sizeof(hwe.bridge.l2));
++	} else if (type == PPE_PKT_TYPE_BRIDGE) {
++		hwe.bridge.l2 = e->data.bridge.l2;
+ 		hwe.bridge.ib2 = e->data.bridge.ib2;
++	} else {
++		hwe.ipv4.l2.common = e->data.bridge.l2;
++		hwe.ipv4.ib2 = e->data.bridge.ib2;
++		/* Unlike ipv6, the ipv4 action block carries the source mac
++		 * itself rather than an smac_id, which is why its l2 is a
++		 * 24-byte mac_info. The bridge template has no room for it
++		 * there, so take it from the template's key words: for a
++		 * bridged flow that is the frame's own source mac, i.e. the
++		 * rewrite is a no-op.
++		 */
++		hwe.ipv4.l2.common.src_mac_hi = e->data.bridge.src_mac_hi;
++		hwe.ipv4.l2.src_mac_lo = e->data.bridge.src_mac_lo;
+ 		if (type == PPE_PKT_TYPE_IPV4_HNAPT)
+ 			memcpy(&hwe.ipv4.new_tuple, &hwe.ipv4.orig_tuple,
+ 			       sizeof(hwe.ipv4.new_tuple));
+--- a/drivers/net/ethernet/airoha/airoha_ppe_debugfs.c
++++ b/drivers/net/ethernet/airoha/airoha_ppe_debugfs.c
+@@ -140,10 +140,10 @@ static int airoha_ppe_debugfs_foe_show(s
+ 			l2 = &hwe->ipv6.l2;
+ 			meter = hwe->ipv6.meter;
+ 		} else if (type == PPE_PKT_TYPE_BRIDGE) {
+-			data = hwe->bridge32.data;
+-			ib2 = hwe->bridge32.ib2;
+-			l2 = &hwe->bridge32.l2;
+-			meter = hwe->bridge32.meter;
++			data = hwe->bridge.data;
++			ib2 = hwe->bridge.ib2;
++			l2 = &hwe->bridge.l2;
++			meter = hwe->bridge.meter;
+ 		} else {
+ 			data = hwe->ipv4.data;
+ 			ib2 = hwe->ipv4.ib2;
+@@ -155,10 +155,10 @@ static int airoha_ppe_debugfs_foe_show(s
+ 
+ 		airoha_ppe_foe_entry_get_stats(ppe, i, &stats);
+ 		if (type == PPE_PKT_TYPE_BRIDGE) {
+-			*((__be32 *)h_dest) = cpu_to_be32(hwe->bridge32.dest_mac_hi);
+-			*((__be16 *)&h_dest[4]) = cpu_to_be16(hwe->bridge32.dest_mac_lo);
+-			*((__be32 *)h_source) = cpu_to_be32(hwe->bridge32.src_mac_hi);
+-			*((__be16 *)&h_source[4]) = cpu_to_be16(hwe->bridge32.src_mac_lo);
++			*((__be32 *)h_dest) = cpu_to_be32(hwe->bridge.dest_mac_hi);
++			*((__be16 *)&h_dest[4]) = cpu_to_be16(hwe->bridge.dest_mac_lo);
++			*((__be32 *)h_source) = cpu_to_be32(hwe->bridge.src_mac_hi);
++			*((__be16 *)&h_source[4]) = cpu_to_be16(hwe->bridge.src_mac_lo);
+ 		} else {
+ 			*((__be32 *)h_dest) = cpu_to_be32(l2->dest_mac_hi);
+ 			*((__be16 *)&h_dest[4]) = cpu_to_be16(l2->dest_mac_lo);
+--- a/drivers/net/ethernet/airoha/arht_dp_api.c
++++ b/drivers/net/ethernet/airoha/arht_dp_api.c
+@@ -838,14 +838,14 @@ void airoha_set_default_acnt_meter_idx(s
+ 
+ 	if ( type == PPE_PKT_TYPE_BRIDGE ) 
+ 	{
+-		hwe->bridge32.ib2 &= ~(AIROHA_FOE_IB2_PORT_AG);
+-		hwe->bridge32.ib2 |= FIELD_PREP(AIROHA_FOE_IB2_PORT_AG, 0x7ff);
+-		hwe->bridge32.meter &= ~(AIROHA_FOE_ACNT_GRP3);
+-		hwe->bridge32.meter |= FIELD_PREP(AIROHA_FOE_ACNT_GRP3, 0x7f);
+-		hwe->bridge32.meter &= ~(AIROHA_FOE_METER_GRP3);
+-		hwe->bridge32.meter |= FIELD_PREP(AIROHA_FOE_METER_GRP3, 0xf);
+-		hwe->bridge32.meter &= ~(AIROHA_FOE_METER_GRP2);
+-		hwe->bridge32.meter |= FIELD_PREP(AIROHA_FOE_METER_GRP2, 0x1f);
++		hwe->bridge.ib2 &= ~(AIROHA_FOE_IB2_PORT_AG);
++		hwe->bridge.ib2 |= FIELD_PREP(AIROHA_FOE_IB2_PORT_AG, 0x7ff);
++		hwe->bridge.meter &= ~(AIROHA_FOE_ACNT_GRP3);
++		hwe->bridge.meter |= FIELD_PREP(AIROHA_FOE_ACNT_GRP3, 0x7f);
++		hwe->bridge.meter &= ~(AIROHA_FOE_METER_GRP3);
++		hwe->bridge.meter |= FIELD_PREP(AIROHA_FOE_METER_GRP3, 0xf);
++		hwe->bridge.meter &= ~(AIROHA_FOE_METER_GRP2);
++		hwe->bridge.meter |= FIELD_PREP(AIROHA_FOE_METER_GRP2, 0x1f);
+ 	}
+ 	else if ( type >= PPE_PKT_TYPE_IPV6_ROUTE_3T )
+ 	{
+@@ -1817,7 +1817,7 @@ static void arht_multicast_hwnat_state_h
+ 		case PPE_PKT_TYPE_BRIDGE:
+ 			hwe->bridge.data = data;
+ 			hwe->bridge.ib2 = val;
+-			hwe->bridge.l2.common.etype = stag_dp;
++			hwe->bridge.l2.etype = stag_dp;
+ 			break;
+ 		
+ 		case PPE_PKT_TYPE_IPV6_ROUTE_3T:
+--- a/drivers/net/ethernet/airoha/arht_loopback.c
++++ b/drivers/net/ethernet/airoha/arht_loopback.c
+@@ -217,10 +217,10 @@ airoha_loopback_configure_entry(struct a
+ 		l2 = &hwe->ipv4.l2.common;
+ 		break;
+ 	case PPE_PKT_TYPE_BRIDGE:
+-		hwe->bridge32.data = data;
+-		hwe->bridge32.ib2 = ib2;
+-		hwe->bridge32.meter |= meter_grp2;
+-		l2 = &hwe->bridge32.l2;
++		hwe->bridge.data = data;
++		hwe->bridge.ib2 = ib2;
++		hwe->bridge.meter |= meter_grp2;
++		l2 = &hwe->bridge.l2;
+ 		break;
+ 	case PPE_PKT_TYPE_IPV6_ROUTE_3T:
+ 	case PPE_PKT_TYPE_IPV6_ROUTE_5T:
+--- a/drivers/net/ethernet/airoha/arht_ppe.c
++++ b/drivers/net/ethernet/airoha/arht_ppe.c
+@@ -913,7 +913,7 @@ int airoha_set_ppe_mac(struct airoha_foe
+ 			l2 = &foe_entry->ipv4.l2.common;			
+ 			break;
+ 		case PPE_PKT_TYPE_BRIDGE:
+-			l2 = &foe_entry->bridge32.l2;
++			l2 = &foe_entry->bridge.l2;
+ 			break;
+ 		case PPE_PKT_TYPE_IPV6_ROUTE_3T:
+ 		case PPE_PKT_TYPE_IPV6_ROUTE_5T:
+@@ -1044,8 +1044,8 @@ void ppe_set_vlan_info(struct airoha_foe
+ 		hwe->ipv6.l2.vlan2 = vid2;
+ 	}
+ 	else if(IS_L2_RRIDGE(hwe)){
+-		hwe->bridge.l2.common.vlan1 = vid1;
+-		hwe->bridge.l2.common.vlan2 = vid2;
++		hwe->bridge.l2.vlan1 = vid1;
++		hwe->bridge.l2.vlan2 = vid2;
+ 	}
+ 
+ 	return;
+@@ -1122,7 +1122,7 @@ static bool arht_ppe_l4s_apply(struct ai
+ 	if (type == PPE_PKT_TYPE_BRIDGE) {
+ 		data = &hwe->bridge.data;
+ 		ib2 = &hwe->bridge.ib2;
+-		meter = (u32 *)&hwe->bridge.l2.meter;
++		meter = (u32 *)&hwe->bridge.meter;
+ 	} else if (type >= PPE_PKT_TYPE_IPV6_ROUTE_3T) {
+ 		data = &hwe->ipv6.data;
+ 		ib2 = &hwe->ipv6.ib2;
+@@ -1288,13 +1288,13 @@ static void airoha_ppe_general_bind(stru
+ 			break;
+ 		
+ 		case PPE_PKT_TYPE_BRIDGE:
+-			hwe->bridge32.data = data;
+-			l2 = &hwe->bridge32.l2;
+-			hwe->bridge32.ib2 = FIELD_PREP(AIROHA_FOE_IB2_PORT_AG, 0x7ff);
+-			hwe->bridge32.ib2 |= FIELD_PREP(AIROHA_FOE_IB2_NBQ, pinfo->nbq);	
+-			hwe->bridge32.ib2 |= FIELD_PREP(AIROHA_FOE_IB2_PSE_PORT, fport) |
++			hwe->bridge.data = data;
++			l2 = &hwe->bridge.l2;
++			hwe->bridge.ib2 = FIELD_PREP(AIROHA_FOE_IB2_PORT_AG, 0x7ff);
++			hwe->bridge.ib2 |= FIELD_PREP(AIROHA_FOE_IB2_NBQ, pinfo->nbq);	
++			hwe->bridge.ib2 |= FIELD_PREP(AIROHA_FOE_IB2_PSE_PORT, fport) |
+ 		       fqos | fast;		
+-			set_ppe_foe_entry_meter_grp2(&hwe->bridge32.meter, meter1_idx);
++			set_ppe_foe_entry_meter_grp2(&hwe->bridge.meter, meter1_idx);
+ 			break;
+ 		
+ 		case PPE_PKT_TYPE_IPV6_ROUTE_3T:
+@@ -1874,8 +1874,8 @@ int airoha_ppe_clean_entry_by_gemport(un
+ 			ib2 = foe_entry->ipv6.ib2;
+ 			l2 = &foe_entry->ipv6.l2;
+ 		} else if(ptype == PPE_PKT_TYPE_BRIDGE){
+-			ib2 = foe_entry->bridge32.ib2;
+-			l2 = &foe_entry->bridge32.l2;
++			ib2 = foe_entry->bridge.ib2;
++			l2 = &foe_entry->bridge.l2;
+ 		} else if(ptype == PPE_PKT_TYPE_IPV4_DSLITE){
+ 			ib2 = foe_entry->dslite.ib2;
+ 			l2 = &foe_entry->dslite.l2.common;
+@@ -1930,8 +1930,8 @@ static int airoha_ppe_clean_entry_by_cha
+ 			data = foe_entry->ipv6.data;
+ 			ib2 = foe_entry->ipv6.ib2;
+ 		} else if(ptype == PPE_PKT_TYPE_BRIDGE){
+-			data = foe_entry->bridge32.data;
+-			ib2 = foe_entry->bridge32.ib2;
++			data = foe_entry->bridge.data;
++			ib2 = foe_entry->bridge.ib2;
+ 		} else if(ptype == PPE_PKT_TYPE_IPV4_DSLITE){
+ 			data = foe_entry->dslite.data;
+ 			ib2 = foe_entry->dslite.ib2;
+@@ -2001,8 +2001,8 @@ static int airoha_ppe_clean_entry_by_fpo
+ 			data = foe_entry->ipv6.data;
+ 			ib2 = foe_entry->ipv6.ib2;
+ 		} else if(ptype == PPE_PKT_TYPE_BRIDGE){
+-			data = foe_entry->bridge32.data;
+-			ib2 = foe_entry->bridge32.ib2;
++			data = foe_entry->bridge.data;
++			ib2 = foe_entry->bridge.ib2;
+ 		} else if(ptype == PPE_PKT_TYPE_IPV4_DSLITE){
+ 			data = foe_entry->dslite.data;
+ 			ib2 = foe_entry->dslite.ib2;
+@@ -2066,7 +2066,7 @@ static int airoha_ppe_clean_entry_by_mac
+ 		if (type >= PPE_PKT_TYPE_IPV6_ROUTE_3T) {
+ 			l2 = &foe_entry->ipv6.l2;
+ 		} else if(type == PPE_PKT_TYPE_BRIDGE){
+-			l2 = &foe_entry->bridge32.l2;
++			l2 = &foe_entry->bridge.l2;
+ 		} else if(type == PPE_PKT_TYPE_IPV4_DSLITE){
+ 			l2 = &foe_entry->dslite.l2.common;
+ 		} else {
+@@ -2075,10 +2075,10 @@ static int airoha_ppe_clean_entry_by_mac
+ 		}
+ 
+ 		if(type ==PPE_PKT_TYPE_BRIDGE){
+-			*((__be32 *)h_dest) = cpu_to_be32(foe_entry->bridge32.dest_mac_hi);
+-			*((__be16 *)&h_dest[4]) = cpu_to_be16(foe_entry->bridge32.dest_mac_lo);
+-			*((__be32 *)h_source) = cpu_to_be32(foe_entry->bridge32.src_mac_hi);
+-			*((__be16 *)&h_source[4]) = cpu_to_be16(foe_entry->bridge32.src_mac_lo);
++			*((__be32 *)h_dest) = cpu_to_be32(foe_entry->bridge.dest_mac_hi);
++			*((__be16 *)&h_dest[4]) = cpu_to_be16(foe_entry->bridge.dest_mac_lo);
++			*((__be32 *)h_source) = cpu_to_be32(foe_entry->bridge.src_mac_hi);
++			*((__be16 *)&h_source[4]) = cpu_to_be16(foe_entry->bridge.src_mac_lo);
+ 		}else {
+ 			*((__be32 *)h_dest) = cpu_to_be32(l2->dest_mac_hi);
+ 			*((__be16 *)&h_dest[4]) = cpu_to_be16(l2->dest_mac_lo);
+@@ -2185,14 +2185,14 @@ static int airoha_ppe_clean_entry_by_typ
+ 		if (ptype >= PPE_PKT_TYPE_IPV6_ROUTE_3T) {
+ 			l2 = &foe_entry->ipv6.l2;
+ 		} else if(ptype == PPE_PKT_TYPE_BRIDGE){
+-			l2 = &foe_entry->bridge32.l2;
++			l2 = &foe_entry->bridge.l2;
+ 		} else {
+ 			l2 = &foe_entry->ipv4.l2.common;
+ 		}
+ 
+ 		if(ptype ==PPE_PKT_TYPE_BRIDGE){
+-			*((__be32 *)h_dest) = cpu_to_be32(foe_entry->bridge32.dest_mac_hi);
+-			*((__be16 *)&h_dest[4]) = cpu_to_be16(foe_entry->bridge32.dest_mac_lo);
++			*((__be32 *)h_dest) = cpu_to_be32(foe_entry->bridge.dest_mac_hi);
++			*((__be16 *)&h_dest[4]) = cpu_to_be16(foe_entry->bridge.dest_mac_lo);
+ 		}else {
+ 			*((__be32 *)h_dest) = cpu_to_be32(l2->dest_mac_hi);
+ 			*((__be16 *)&h_dest[4]) = cpu_to_be16(l2->dest_mac_lo);
+@@ -2556,16 +2556,16 @@ static int airoha_ppe_set_multicast_vlan
+         return -1;
+     }
+ 
+-    ptype = FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, foe_entry->ib1);
+-    if (ptype >= PPE_PKT_TYPE_IPV6_ROUTE_3T) {
+-        l2 = &foe_entry->ipv6.l2;
+-    } else if(ptype == PPE_PKT_TYPE_BRIDGE){
+-        l2 = &foe_entry->bridge32.l2;
+-    } else if(ptype == PPE_PKT_TYPE_IPV4_DSLITE){
++	ptype = FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, foe_entry->ib1);
++	if (ptype >= PPE_PKT_TYPE_IPV6_ROUTE_3T) {
++		l2 = &foe_entry->ipv6.l2;
++	} else if (ptype == PPE_PKT_TYPE_BRIDGE) {
++		l2 = &foe_entry->bridge.l2;
++	} else if (ptype == PPE_PKT_TYPE_IPV4_DSLITE) {
+ 		l2 = &foe_entry->dslite.l2.common;
+ 	} else {
+-        l2 = &foe_entry->ipv4.l2.common;
+-    }
++		l2 = &foe_entry->ipv4.l2.common;
++	}
+ 
+ 	l2->etype &= ~(0x3 << 8);
+ 	l2->etype |= (0x3 & vpm) << 8;
+@@ -2620,8 +2620,8 @@ static int airoha_ppe_is_multicast_entry
+ 	}
+ 	else if (ptype == PPE_PKT_TYPE_BRIDGE)
+ 	{
+-        *((__be32 *)h_dest) = cpu_to_be32(foe_entry->bridge32.dest_mac_hi);
+-        *((__be16 *)&h_dest[4]) = cpu_to_be16(foe_entry->bridge32.dest_mac_lo);
++		*((__be32 *)h_dest) = cpu_to_be32(foe_entry->bridge.dest_mac_hi);
++		*((__be16 *)&h_dest[4]) = cpu_to_be16(foe_entry->bridge.dest_mac_lo);
+ 
+ 		if(h_dest[0] == 0x01 && h_dest[1] == 0x00 && h_dest[2] == 0x5E) {
+ 			return 1;
+@@ -2672,11 +2672,11 @@ static int airoha_ppe_set_special_tag(in
+ 	}
+ 
+ 	ptype = FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, foe_entry->ib1);
+-    if (ptype >= PPE_PKT_TYPE_IPV6_ROUTE_3T) {
+-        l2 = &foe_entry->ipv6.l2;
+-    } else if(ptype == PPE_PKT_TYPE_BRIDGE){
+-        l2 = &foe_entry->bridge32.l2;
+-    } else if(ptype == PPE_PKT_TYPE_IPV4_DSLITE){
++	if (ptype >= PPE_PKT_TYPE_IPV6_ROUTE_3T) {
++		l2 = &foe_entry->ipv6.l2;
++	} else if (ptype == PPE_PKT_TYPE_BRIDGE) {
++		l2 = &foe_entry->bridge.l2;
++	} else if (ptype == PPE_PKT_TYPE_IPV4_DSLITE) {
+ 		l2 = &foe_entry->dslite.l2.common;
+ 	} else {
+         l2 = &foe_entry->ipv4.l2.common;
+@@ -2913,7 +2913,7 @@ void airoha_ppe_foe_flow_update_pon_offl
+ 				
+ 				case PPE_PKT_TYPE_BRIDGE:
+ 					e->data.bridge.data = data;
+-					l2 = &e->data.bridge.l2.common;
++					l2 = &e->data.bridge.l2;
+ 					e->data.bridge.ib2 &= ~AIROHA_FOE_IB2_NBQ;
+ 					e->data.bridge.ib2 |= FIELD_PREP(AIROHA_FOE_IB2_NBQ, pinfo->channel);	
+ 					break;
+@@ -3373,7 +3373,7 @@ void airoha_ppe_foe_flow_update_wifi_npu
+ 					
+ 					case PPE_PKT_TYPE_BRIDGE:
+ 						e->data.bridge.data = data;
+-						e->data.bridge.l2.common.etype = pinfo->stag;
++						e->data.bridge.l2.etype = pinfo->stag;
+ 						e->data.bridge.ib2 &= ~AIROHA_FOE_IB2_PSE_QOS;
+ 						e->data.bridge.ib2 &= ~AIROHA_FOE_IB2_NBQ;
+ 						e->data.bridge.ib2 |= FIELD_PREP(AIROHA_FOE_IB2_NBQ, pinfo->nbq);
+@@ -3417,7 +3417,7 @@ void airoha_ppe_foe_flow_update_wifi_npu
+ 					struct airoha_foe_mac_info_common *l2;
+ 	
+ 					if (pkt_type == PPE_PKT_TYPE_BRIDGE)
+-						l2 = &e->data.bridge.l2.common;
++						l2 = &e->data.bridge.l2;
+ 					else if (pkt_type >= PPE_PKT_TYPE_IPV6_ROUTE_3T)
+ 						l2 = &e->data.ipv6.l2;
+ 					else

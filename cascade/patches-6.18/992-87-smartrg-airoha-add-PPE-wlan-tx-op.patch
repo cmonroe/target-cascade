@@ -43,7 +43,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/airoha/airoha_eth.c
 +++ b/drivers/net/ethernet/airoha/airoha_eth.c
-@@ -986,7 +986,7 @@ static int airoha_qdma_rx_process(struct
+@@ -980,7 +980,7 @@ static int airoha_qdma_rx_process(struct
  			reason = FIELD_GET(AIROHA_RXD4_PPE_CPU_REASON, msg1);
  			if (reason == PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED)
  				airoha_ppe_check_skb(&eth->ppe->dev, q->skb, hash,
@@ -69,7 +69,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  /* RX queue to IRQ mapping: BIT(q) in IRQ(n) */
  #define RX_IRQ0_BANK_PIN_MASK			0xfb9f
  #define RX_IRQ1_BANK_PIN_MASK			0x7fe00000
-@@ -931,7 +923,7 @@ void airoha_ppe_set_mtu(struct airoha_gd
+@@ -932,7 +924,7 @@ void airoha_ppe_set_mtu(struct airoha_gd
  void airoha_ppe_set_cpu_port(struct airoha_gdm_dev *dev, u8 ppe_id, u8 fport);
  bool airoha_ppe_is_enabled(struct airoha_eth *eth, int index);
  void airoha_ppe_check_skb(struct airoha_ppe_dev *dev, struct sk_buff *skb,

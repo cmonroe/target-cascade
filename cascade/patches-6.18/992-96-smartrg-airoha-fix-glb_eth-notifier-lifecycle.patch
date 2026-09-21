@@ -30,7 +30,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/airoha/airoha_eth.c
 +++ b/drivers/net/ethernet/airoha/airoha_eth.c
-@@ -1869,6 +1869,10 @@ static void airoha_hw_cleanup(struct air
+@@ -1863,6 +1863,10 @@ static void airoha_hw_cleanup(struct air
  {
  	int i;
  

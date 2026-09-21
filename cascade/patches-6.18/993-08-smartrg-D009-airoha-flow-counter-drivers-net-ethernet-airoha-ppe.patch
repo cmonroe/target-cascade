@@ -1,0 +1,63 @@
+--- a/drivers/net/ethernet/airoha/airoha_ppe.c
++++ b/drivers/net/ethernet/airoha/airoha_ppe.c
+@@ -157,6 +157,11 @@ static void airoha_ppe_hw_init(struct ai
+ 		sram_ppe_num_data_entries -= sram_num_stats_entries;
+ 	sram_ppe_num_data_entries =
+ 		PPE_RAM_NUM_ENTRIES_SHIFT(sram_ppe_num_data_entries);
++		
++#ifdef CONFIG_NET_AIROHA_FLOW_STATS	
++	airoha_fe_rmw(eth, PSE_FC_CFG, PSE_PORT6_SHARE_DIS, 
++			FIELD_PREP(PSE_PORT6_SHARE_DIS, 0));
++#endif
+ 
+ 	for (i = 0; i < eth->soc->num_ppe; i++) {
+ 		airoha_fe_wr(eth, REG_PPE_TB_BASE(i),
+@@ -661,9 +666,10 @@ static void airoha_ppe_foe_flow_stats_up
+ 					     u32 hash)
+ {
+ 	int type = FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, hwe->ib1);
+-	u32 index, pse_port, val, *data, *ib2, *meter;
++	u32 index=0, pse_port, val, *data, *ib2;
+ 	int ppe_num_stats_entries;
+ 	u8 nbq;
++	u16 *tunnel_mtu;
+ 
+ 	ppe_num_stats_entries = airoha_ppe_get_total_num_stats_entries(ppe);
+ 	if (ppe_num_stats_entries < 0)
+@@ -678,15 +684,15 @@ static void airoha_ppe_foe_flow_stats_up
+ 	if (type == PPE_PKT_TYPE_BRIDGE) {
+ 		data = &hwe->bridge.data;
+ 		ib2 = &hwe->bridge.ib2;
+-		meter = (u32 *)&hwe->bridge.meter;
++		tunnel_mtu = &hwe->bridge.tunnel_mtu;
+ 	} else if (type >= PPE_PKT_TYPE_IPV6_ROUTE_3T) {
+ 		data = &hwe->ipv6.data;
+ 		ib2 = &hwe->ipv6.ib2;
+-		meter = (u32 *)&hwe->ipv6.meter;
++		tunnel_mtu = &hwe->ipv6.tunnel_mtu;
+ 	} else {
+ 		data = &hwe->ipv4.data;
+ 		ib2 = &hwe->ipv4.ib2;
+-		meter = (u32 *)&hwe->ipv4.l2.meter;
++		tunnel_mtu = &hwe->ipv4.l2.tunnel_mtu;
+ 	}
+ 
+ 	pse_port = FIELD_GET(AIROHA_FOE_IB2_PSE_PORT, *ib2);
+@@ -701,13 +707,13 @@ static void airoha_ppe_foe_flow_stats_up
+ 
+ 	val = *ib2 & (AIROHA_FOE_IB2_NBQ | AIROHA_FOE_IB2_PSE_PORT |
+ 		      AIROHA_FOE_IB2_PSE_QOS | AIROHA_FOE_IB2_FAST_PATH);
+-	*meter |= FIELD_PREP(AIROHA_FOE_TUNNEL_MTU, val);
++	*tunnel_mtu = val & 0xFFFF;
+ 
+-	nbq = pse_port == 1 ? 6 : 5;
++	nbq = (pse_port == FE_PSE_PORT_GDM1 || pse_port == FE_PSE_PORT_GDM3 || pse_port == FE_PSE_PORT_GDM4) ? 7 : 5;
+ 	*ib2 &= ~(AIROHA_FOE_IB2_NBQ | AIROHA_FOE_IB2_PSE_PORT |
+ 		  AIROHA_FOE_IB2_PSE_QOS);
+-	*ib2 |= FIELD_PREP(AIROHA_FOE_IB2_PSE_PORT, 6) |
+-		FIELD_PREP(AIROHA_FOE_IB2_NBQ, nbq);
++	*ib2 |= FIELD_PREP(AIROHA_FOE_IB2_PSE_PORT, FE_PSE_PORT_CDM3) | FIELD_PREP(AIROHA_FOE_IB2_NBQ, nbq);
++
+ }
+ 
+ struct airoha_foe_entry *

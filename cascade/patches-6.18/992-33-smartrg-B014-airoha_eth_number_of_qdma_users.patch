@@ -1,0 +1,57 @@
+Subject: [PATCH] airoha: add HW GRO support
+
+HW_LRO is changed to HW_GRO, and the qdma users is limit is removed and lro rings changed to 12-15
+
+Signed-off-by: Madhur <madhur.agrawal@airoha.com>
+
+--- a/drivers/net/ethernet/airoha/airoha_eth.c
++++ b/drivers/net/ethernet/airoha/airoha_eth.c
+@@ -2153,17 +2153,13 @@ static int airoha_dev_open(struct net_de
+ 	u32 pse_port = FE_PSE_PORT_PPE1;
+ 	int err, qdma_id;
+ 
+-	/* HW LRO is configured on the QDMA and it is shared between
+-	 * all the devices using it. Refuse to open a second device on
+-	 * the same QDMA if LRO is enabled on any device sharing it.
+-	 */
++
+ 	qdma = airoha_qdma_deref(dev);
+ 	qdma_id = qdma - &eth->qdma[0];
+ 
+ 	if (qdma->users && airoha_fe_lro_is_enabled(eth, qdma_id)) {
+-		netdev_warn(netdev, "required to disable HW GRO on QDMA%d\n",
++		netdev_warn(netdev, "opening HW GRO on QDMA%d\n",
+ 			    qdma_id);
+-		return -EBUSY;
+ 	}
+ 
+ 	err = phylink_of_phy_connect(dev->phylink, netdev->dev.of_node, 0);
+@@ -2557,8 +2553,6 @@ static netdev_features_t airoha_dev_fix_
+ 	struct airoha_qdma *qdma;
+ 
+ 	qdma = airoha_qdma_deref(dev);
+-	if (qdma->users > 1)
+-		features &= ~NETIF_F_GRO_HW;
+ 
+ 	return features;
+ }
+@@ -4006,7 +4000,7 @@ static int airoha_alloc_gdm_device(struc
+ 	netdev->ethtool_ops = &airoha_ethtool_ops;
+ 	netdev->max_mtu = AIROHA_MAX_MTU;
+ 	netdev->watchdog_timeo = 5 * HZ;
+-	netdev->hw_features = AIROHA_HW_FEATURES | NETIF_F_LRO;
++	netdev->hw_features = AIROHA_HW_FEATURES | NETIF_F_GRO_HW;
+ 	netdev->features |= AIROHA_HW_FEATURES;
+ 	netdev->vlan_features = AIROHA_HW_FEATURES;
+ 	SET_NETDEV_DEV(netdev, eth->dev);
+--- a/drivers/net/ethernet/airoha/airoha_eth.h
++++ b/drivers/net/ethernet/airoha/airoha_eth.h
+@@ -49,7 +49,7 @@
+ 
+ #define AIROHA_LRO_PAGE_ORDER		order_base_2(SZ_16K / PAGE_SIZE)
+ #define AIROHA_MAX_NUM_LRO_QUEUES	8
+-#define AIROHA_RXQ_LRO_EN_MASK		GENMASK(7, 0)
++#define AIROHA_RXQ_LRO_EN_MASK		0xff000
+ #define AIROHA_RXQ_LRO_MAX_AGG_COUNT	64
+ #define AIROHA_RXQ_LRO_MAX_AGG_TIME	100
+ #define AIROHA_RXQ_LRO_MAX_AGE_TIME	2000

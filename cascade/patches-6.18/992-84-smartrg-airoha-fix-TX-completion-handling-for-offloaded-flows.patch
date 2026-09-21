@@ -12,7 +12,7 @@ Signed-off-by: Hoang Viet Pham <hoang.pham@adtran.com>
 
 --- a/drivers/net/ethernet/airoha/airoha_eth.c
 +++ b/drivers/net/ethernet/airoha/airoha_eth.c
-@@ -1268,10 +1268,12 @@ static int airoha_qdma_tx_napi_poll(stru
+@@ -1262,10 +1262,12 @@ static int airoha_qdma_tx_napi_poll(stru
  		q->queued--;
  
  		if (skb) {
