@@ -1,0 +1,37 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Mon, 21 Sep 2026 11:58:39 -0700
+Subject: [PATCH] net: airoha: enable HW GRO by default
+
+The dynamic IFC code and the local-in offload steer a TCP flow of a
+local application to an LRO ring, but the CDM LRO engine aggregates
+only while rx-gro-hw is on, and a steered flow gets no gain without
+it. No SmartOS component sets the feature, so it is now on from the
+registration of every airoha net_device, for the LAN and the WAN
+side. The wanted state of each QDMA starts as on too, so a
+net_device and its QDMA agree before the first open. The first open
+programs the engine, and ethtool can still turn the feature off.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/airoha_eth.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/airoha/airoha_eth.c
++++ b/drivers/net/ethernet/airoha/airoha_eth.c
+@@ -1758,6 +1758,7 @@ static int airoha_qdma_init(struct platf
+ 	const char *res;
+ 
+ 	qdma->eth = eth;
++	qdma->hw_gro = true;
+ 	res = devm_kasprintf(eth->dev, GFP_KERNEL, "qdma%d", id);
+ 	if (!res)
+ 		return -ENOMEM;
+@@ -4074,7 +4075,7 @@ static int airoha_alloc_gdm_device(struc
+ 	netdev->max_mtu = AIROHA_MAX_MTU;
+ 	netdev->watchdog_timeo = 5 * HZ;
+ 	netdev->hw_features = AIROHA_HW_FEATURES | NETIF_F_GRO_HW;
+-	netdev->features |= AIROHA_HW_FEATURES;
++	netdev->features |= AIROHA_HW_FEATURES | NETIF_F_GRO_HW;
+ 	netdev->vlan_features = AIROHA_HW_FEATURES;
+ 	SET_NETDEV_DEV(netdev, eth->dev);
+ 
