@@ -47,8 +47,8 @@ mediatek_setup_interfaces()
 		;;
 	# no wan netdev on the PON boards and SmartOS provisioning owns the
 	# network config; keep board.d silent like the dragontail image did
-	smartrg,sdg-8716v|\
-	smartrg,sdg-8736v)
+	smartrg,sdg-p72v-plus|\
+	smartrg,sdg-p73v-ultra)
 		;;
 	arcadyan,mozart)
 		ucidef_set_interfaces_lan_wan "lan0 eth1" eth2

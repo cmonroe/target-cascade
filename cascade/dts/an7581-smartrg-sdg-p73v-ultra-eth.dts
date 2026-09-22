@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 
-#include "an7581-smartrg-SDG-8736v.dts"
+#include "an7581-smartrg-sdg-p73v-ultra.dts"
 
 &gsw_port3 {
 	label = "wan";

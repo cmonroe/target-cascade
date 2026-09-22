@@ -40,7 +40,7 @@ define Device/polecat
   DEVICE_DTS += mt7988d-smartrg-SDG-8733A
   DEVICE_DTS += mt7988a-smartrg-SDG-8713
   DEVICE_DTS += mt7988a-smartrg-SDG-8713v
-  DEVICE_DTS += mt7988a-smartrg-SDG-8733B
+  DEVICE_DTS += mt7988a-smartrg-sdg-x73-ultra
   DEVICE_DTS += mt7987a-smartrg-SDG-8712
   DEVICE_DTS += mt7987a-smartrg-SDG-8712v
   DEVICE_DTS += mt7987a-smartrg-SDG-8732
@@ -48,10 +48,10 @@ define Device/polecat
   DEVICE_DTS += mt7988a-smartrg-SDG-9000
   DEVICE_DTS += mt7988d-smartrg-SDG-9732i
   DEVICE_DTS += mt7988d-smartrg-SDG-9712o
-  DEVICE_DTS += an7581-smartrg-SDG-8716v
-  DEVICE_DTS += an7581-smartrg-SDG-8716v-eth
-  DEVICE_DTS += an7581-smartrg-SDG-8736v
-  DEVICE_DTS += an7581-smartrg-SDG-8736v-eth
+  DEVICE_DTS += an7581-smartrg-sdg-p72v-plus
+  DEVICE_DTS += an7581-smartrg-sdg-p72v-plus-eth
+  DEVICE_DTS += an7581-smartrg-sdg-p73v-ultra
+  DEVICE_DTS += an7581-smartrg-sdg-p73v-ultra-eth
   DEVICE_DTS_DIR := ../dts
   DEVICE_PACKAGES += kmod-i2c-an7581
   ARTIFACTS := emmc-preloader.bin emmc-bl31-uboot.fip \
@@ -105,7 +105,7 @@ define Build/SrgFit
 		-i "SDG-8733A" -d $(KDIR)/image-mt7988d-smartrg-SDG-8733A.dtb.lzma -C lzma -h "crc32" -h "sha1" \
 		-i "SDG-8713" -d $(KDIR)/image-mt7988a-smartrg-SDG-8713.dtb.lzma -C lzma -h "crc32" -h "sha1" \
 		-i "SDG-8713v" -d $(KDIR)/image-mt7988a-smartrg-SDG-8713v.dtb.lzma -C lzma -h "crc32" -h "sha1" \
-		-i "SDG-8733B" -d $(KDIR)/image-mt7988a-smartrg-SDG-8733B.dtb.lzma -C lzma -h "crc32" -h "sha1" \
+		-i "SDG-X73-Ultra" -d $(KDIR)/image-mt7988a-smartrg-sdg-x73-ultra.dtb.lzma -C lzma -h "crc32" -h "sha1" \
 		-i "SDG-8712" -d $(KDIR)/image-mt7987a-smartrg-SDG-8712.dtb.lzma -C lzma -h "crc32" -h "sha1" \
 		-i "SDG-8712v" -d $(KDIR)/image-mt7987a-smartrg-SDG-8712v.dtb.lzma -C lzma -h "crc32" -h "sha1" \
 		-i "SDG-8732" -d $(KDIR)/image-mt7987a-smartrg-SDG-8732.dtb.lzma -C lzma -h "crc32" -h "sha1" \
@@ -113,10 +113,10 @@ define Build/SrgFit
 		-i "SDG-9000" -d $(KDIR)/image-mt7988a-smartrg-SDG-9000.dtb.lzma -C lzma -h "crc32" -h "sha1" \
 		-i "SDG-9732i" -d $(KDIR)/image-mt7988d-smartrg-SDG-9732i.dtb.lzma -C lzma -h "crc32" -h "sha1" \
 		-i "SDG-9712o" -d $(KDIR)/image-mt7988d-smartrg-SDG-9712o.dtb.lzma -C lzma -h "crc32" -h "sha1" \
-		-i "SDG-8716v" -d $(KDIR)/image-an7581-smartrg-SDG-8716v.dtb.lzma -C lzma -h "crc32" -h "sha1" \
-		-i "SDG-8716v-eth" -d $(KDIR)/image-an7581-smartrg-SDG-8716v-eth.dtb.lzma -C lzma -h "crc32" -h "sha1" \
-		-i "SDG-8736v" -d $(KDIR)/image-an7581-smartrg-SDG-8736v.dtb.lzma -C lzma -h "crc32" -h "sha1" \
-		-i "SDG-8736v-eth" -d $(KDIR)/image-an7581-smartrg-SDG-8736v-eth.dtb.lzma -C lzma -h "crc32" -h "sha1" \
+		-i "SDG-P72v-Plus" -d $(KDIR)/image-an7581-smartrg-sdg-p72v-plus.dtb.lzma -C lzma -h "crc32" -h "sha1" \
+		-i "SDG-P72v-Plus-Eth" -d $(KDIR)/image-an7581-smartrg-sdg-p72v-plus-eth.dtb.lzma -C lzma -h "crc32" -h "sha1" \
+		-i "SDG-P73v-Ultra" -d $(KDIR)/image-an7581-smartrg-sdg-p73v-ultra.dtb.lzma -C lzma -h "crc32" -h "sha1" \
+		-i "SDG-P73v-Ultra-Eth" -d $(KDIR)/image-an7581-smartrg-sdg-p73v-ultra-eth.dtb.lzma -C lzma -h "crc32" -h "sha1" \
 		-c "300" -K k1 -R rdisk -D "srbpi" \
 		-c "402" -K k1 -R rdisk -D "834-5" \
 		-c "403" -K k1 -R rdisk -D "834-5" \
@@ -143,7 +143,7 @@ define Build/SrgFit
 		-c "434" -K k1 -R rdisk -D "SDG-8733A" -T "smartrg,sdg-8733a" \
 		-c "435" -K k1 -R rdisk -D "SDG-8713" -T "smartrg,sdg-8713" \
 		-c "436" -K k1 -R rdisk -D "SDG-8713v" -T "smartrg,sdg-8713v" \
-		-c "437" -K k1 -R rdisk -D "SDG-8733B" -T "smartrg,sdg-8733b" \
+		-c "437" -K k1 -R rdisk -D "SDG-X73-Ultra" -T "smartrg,sdg-x73-ultra" \
 		-c "440" -K k1 -R rdisk -D "SDG-8712" -T "smartrg,sdg-8712" \
 		-c "441" -K k1 -R rdisk -D "SDG-8712v" -T "smartrg,sdg-8712v" \
 		-c "442" -K k1 -R rdisk -D "SDG-8732" -T "smartrg,sdg-8732" \
@@ -151,10 +151,10 @@ define Build/SrgFit
 		-c "500" -K k1 -R rdisk -D "SDG-9000" -T "smartrg,sdg-9000" \
 		-c "510" -K k1 -R rdisk -D "SDG-9732i" -T "smartrg,sdg-9732i" \
 		-c "511" -K k1 -R rdisk -D "SDG-9712o" -T "smartrg,sdg-9712o" \
-		-c "600" -K k2 -R rdisk -D "SDG-8716v" \
-		-c "601" -K k2 -R rdisk -D "SDG-8736v" \
-		-c "1600" -K k2 -R rdisk -D "SDG-8716v-eth" \
-		-c "1601" -K k2 -R rdisk -D "SDG-8736v-eth" \
+		-c "600" -K k2 -R rdisk -D "SDG-P72v-Plus" \
+		-c "601" -K k2 -R rdisk -D "SDG-P73v-Ultra" \
+		-c "1600" -K k2 -R rdisk -D "SDG-P72v-Plus-Eth" \
+		-c "1601" -K k2 -R rdisk -D "SDG-P73v-Ultra-Eth" \
 		-c "799" -K k1 -R rdisk -D "SDG-8712v" -T "smartrg,sdg-8712v"
 
 	PATH=$(LINUX_DIR)/scripts/dtc:$(PATH) mkimage -f $@.its $@.new

@@ -9,8 +9,8 @@
 #include "mt7988-smartrg-wifi-mt7995.dtsi"
 
 / {
-	model = "SmartRG SDG-8733B";
-	compatible = "smartrg,sdg-8733b", "mediatek,mt7988a";
+	model = "SmartRG SDG X73 Ultra";
+	compatible = "smartrg,sdg-x73-ultra", "mediatek,mt7988a";
 
 	aliases {
 		label-mac-device = &gmac2;

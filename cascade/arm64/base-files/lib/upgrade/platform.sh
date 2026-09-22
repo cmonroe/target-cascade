@@ -206,11 +206,11 @@ platform_do_upgrade() {
 	smartrg,sdg-8614|\
 	smartrg,sdg-8622|\
 	smartrg,sdg-8632|\
-	smartrg,sdg-8716v|\
 	smartrg,sdg-8733|\
 	smartrg,sdg-8733a|\
 	smartrg,sdg-8734|\
-	smartrg,sdg-8736v)
+	smartrg,sdg-p72v-plus|\
+	smartrg,sdg-p73v-ultra)
 		CI_KERNPART="kernel"
 		CI_ROOTPART="rootfs"
 		emmc_do_upgrade "$1"
@@ -456,11 +456,11 @@ platform_copy_config() {
 	smartrg,sdg-8614|\
 	smartrg,sdg-8622|\
 	smartrg,sdg-8632|\
-	smartrg,sdg-8716v|\
 	smartrg,sdg-8733|\
 	smartrg,sdg-8733a|\
 	smartrg,sdg-8734|\
-	smartrg,sdg-8736v|\
+	smartrg,sdg-p72v-plus|\
+	smartrg,sdg-p73v-ultra|\
 	ubnt,unifi-6-plus)
 		emmc_copy_config
 		;;

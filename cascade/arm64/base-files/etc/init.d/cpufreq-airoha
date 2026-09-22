@@ -8,8 +8,8 @@ START=11
 boot() {
 	case $(board_name) in
 	airoha,an7581-evb|\
-	smartrg,sdg-8716v|\
-	smartrg,sdg-8736v)
+	smartrg,sdg-p72v-plus|\
+	smartrg,sdg-p73v-ultra)
 		for gov in /sys/devices/system/cpu/cpufreq/policy*/scaling_governor; do
 			[ -f "$gov" ] && echo performance > "$gov"
 		done

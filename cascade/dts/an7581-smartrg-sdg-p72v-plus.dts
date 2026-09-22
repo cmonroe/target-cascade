@@ -13,8 +13,8 @@
 #include "an7581-smartrg-pon.dtsi"
 
 / {
-	model = "SmartRG SDG-8716v";
-	compatible = "smartrg,sdg-8716v", "airoha,an7581", "airoha,en7581";
+	model = "SmartRG SDG P72v Plus";
+	compatible = "smartrg,sdg-p72v-plus", "airoha,an7581", "airoha,en7581";
 
 	aliases {
 		serial0 = &uart1;
