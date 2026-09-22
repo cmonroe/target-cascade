@@ -1,0 +1,37 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Tue, 22 Sep 2026 15:44:57 -0700
+Subject: [PATCH] net: ethernet: mtk_eth_soc: enable EEE on MT7986 and MT7987
+
+Only SoCs with the GMAC EEE capability get LPI interfaces, and only
+MT7981 sets it. On MT7986 and MT7987, phylink therefore clears the
+PHY EEE advertisement, and ethtool reports EEE as not supported. The
+MediaTek SDK enables EEE on the GMAC of all these SoCs.
+
+Set the capability on MT7986 and MT7987. Their PHYs keep the EEE
+advertisement they have after reset, and userspace can enable LPI.
+MT7988 stays without it, because all its PHY links use xGMII modes,
+where the MAC has no LPI support.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/mediatek/mtk_eth_soc.h |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+@@ -1239,13 +1239,13 @@ enum mkt_eth_capabilities {
+ 
+ #define MT7986_CAPS  (MTK_GMAC1_SGMII | MTK_GMAC2_SGMII | \
+ 		      MTK_MUX_GMAC12_TO_GEPHY_SGMII | MTK_QDMA | \
+-		      MTK_RSTCTRL_PPE1 | MTK_SRAM)
++		      MTK_RSTCTRL_PPE1 | MTK_SRAM | MTK_GMAC_EEE)
+ 
+ #define MT7987_CAPS  (MTK_36BIT_DMA | MTK_GMAC1_SGMII | \
+ 		      MTK_GMAC2_2P5GPHY_V2 | MTK_GMAC2_SGMII | MTK_GMAC3_SGMII | \
+ 		      MTK_MUX_GMAC123_TO_GEPHY_SGMII | MTK_MUX_GMAC2_TO_2P5GPHY | \
+ 		      MTK_MUX_U3_GMAC23_TO_QPHY | MTK_U3_COPHY_V2 | \
+-		      MTK_QDMA | MTK_RSTCTRL_PPE1)
++		      MTK_QDMA | MTK_RSTCTRL_PPE1 | MTK_GMAC_EEE)
+ 
+ #define MT7988_CAPS  (MTK_36BIT_DMA | MTK_GDM1_ESW | MTK_GMAC1_SGMII | \
+ 		      MTK_GMAC2_2P5GPHY | MTK_GMAC2_SGMII | MTK_GMAC2_USXGMII | \

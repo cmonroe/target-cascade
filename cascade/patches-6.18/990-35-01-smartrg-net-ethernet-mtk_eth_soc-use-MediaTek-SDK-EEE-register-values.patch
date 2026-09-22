@@ -1,0 +1,85 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Tue, 22 Sep 2026 15:44:29 -0700
+Subject: [PATCH] net: ethernet: mtk_eth_soc: use MediaTek SDK EEE register values
+
+The LPI ops program PHY wake-up times taken from the MT7531 switch.
+MediaTek's SDK patch d1f8cd781d5e ("net: ethernet: mtk_eth_soc:
+refactor EEE support for GMAC") programs this GMAC with its own
+values, and SmartRG follows the SoC vendor.
+
+The EEE control register now gets wake-up times of 19 and 33, and 14
+in bits 7:4. The MAC control register sets only the EEE bit for the
+link speed. When LPI stops, the EEE control register gets 0x2, the
+SDK disable value. TX clock gating stays off, because the SDK never
+sets it. The idle timer keeps the ethtool unit of microseconds, so
+the SDK example "tx-timer 1" gives the same register value.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/mediatek/mtk_eth_soc.c |   28 +++++++++++-------
+ drivers/net/ethernet/mediatek/mtk_eth_soc.h |    1 
+ 2 files changed, 19 insertions(+), 10 deletions(-)
+
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+@@ -1026,6 +1026,8 @@ static void mtk_mac_disable_tx_lpi(struc
+ 					   phylink_config);
+ 	struct mtk_eth *eth = mac->hw;
+ 
++	/* MediaTek SDK disable value; bit 1 is undocumented */
++	mtk_w32(eth, 0x00000002, MTK_MAC_EEECR(mac->id));
+ 	mtk_m32(eth, MAC_MCR_EEE100M | MAC_MCR_EEE1G, 0, MTK_MAC_MCR(mac->id));
+ }
+ 
+@@ -1035,7 +1037,7 @@ static int mtk_mac_enable_tx_lpi(struct
+ 	struct mtk_mac *mac = container_of(config, struct mtk_mac,
+ 					   phylink_config);
+ 	struct mtk_eth *eth = mac->hw;
+-	u32 val;
++	u32 mcr = 0, val;
+ 
+ 	if (mtk_interface_mode_is_xgmii(eth, mac->interface))
+ 		return -EOPNOTSUPP;
+@@ -1054,17 +1056,23 @@ static int mtk_mac_enable_tx_lpi(struct
+ 	else
+ 		val = MAC_EEE_LPI_TXIDLE_THD;
+ 
+-	if (tx_clk_stop)
+-		val |= MAC_EEE_CKG_TXIDLE;
+-
+-	/* PHY Wake-up time, this field does not have a reset value, so use the
+-	 * reset value from MT7531 (36us for 100M and 17us for 1000M).
+-	 */
+-	val |= FIELD_PREP(MAC_EEE_WAKEUP_TIME_1000, 17) |
+-	       FIELD_PREP(MAC_EEE_WAKEUP_TIME_100, 36);
++	/* PHY wake-up times and RESV0 are the MediaTek SDK values */
++	val |= FIELD_PREP(MAC_EEE_WAKEUP_TIME_1000, 19) |
++	       FIELD_PREP(MAC_EEE_WAKEUP_TIME_100, 33) |
++	       FIELD_PREP(MAC_EEE_RESV0, 14);
+ 
+ 	mtk_w32(eth, val, MTK_MAC_EEECR(mac->id));
+-	mtk_m32(eth, 0, MAC_MCR_EEE100M | MAC_MCR_EEE1G, MTK_MAC_MCR(mac->id));
++
++	switch (mac->speed) {
++	case SPEED_1000:
++		mcr = MAC_MCR_EEE1G;
++		break;
++	case SPEED_100:
++		mcr = MAC_MCR_EEE100M;
++		break;
++	}
++
++	mtk_m32(eth, MAC_MCR_EEE100M | MAC_MCR_EEE1G, mcr, MTK_MAC_MCR(mac->id));
+ 
+ 	return 0;
+ }
+--- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
++++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+@@ -518,6 +518,7 @@ struct dentry;
+ #define MAC_EEE_WAKEUP_TIME_1000	GENMASK(31, 24)
+ #define MAC_EEE_WAKEUP_TIME_100		GENMASK(23, 16)
+ #define MAC_EEE_LPI_TXIDLE_THD		GENMASK(15, 8)
++#define MAC_EEE_RESV0			GENMASK(7, 4)
+ #define MAC_EEE_CKG_TXIDLE		BIT(3)
+ #define MAC_EEE_CKG_RXLPI		BIT(2)
+ #define MAC_EEE_LPI_MODE		BIT(0)
