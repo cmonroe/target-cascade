@@ -46,7 +46,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  				unsigned int mode, phy_interface_t interface,
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
-@@ -1693,4 +1693,6 @@ static inline bool mtk_qtx_sch_is_v3_lay
+@@ -1695,4 +1695,6 @@ static inline bool mtk_qtx_sch_is_v3_lay
  	       eth->soc->caps != MT7988_CAPS;
  }
  

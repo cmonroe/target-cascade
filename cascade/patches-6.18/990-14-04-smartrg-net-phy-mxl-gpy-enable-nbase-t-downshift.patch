@@ -18,12 +18,12 @@ multi-gigabit copper parts, for example GPY211 and MxL86211C. The
 
 Signed-off-by: Chad Monroe <chad@monroe.io>
 ---
- drivers/net/phy/mxl-gpy.c |   35 ++++++++++++++++++++++++++++++++++-
- 1 file changed, 34 insertions(+), 1 deletion(-)
+ drivers/net/phy/mxl-gpy.c |   32 ++++++++++++++++++++++++++++++++
+ 1 file changed, 32 insertions(+)
 
 --- a/drivers/net/phy/mxl-gpy.c
 +++ b/drivers/net/phy/mxl-gpy.c
-@@ -106,6 +106,14 @@
+@@ -111,6 +111,14 @@
  #define VSPEC1_SGMII_ANEN_ANRS	(VSPEC1_SGMII_CTRL_ANEN | \
  				 VSPEC1_SGMII_CTRL_ANRS)
  
@@ -38,7 +38,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  /* Temperature sensor */
  #define VSPEC1_TEMP_STA	0x0E
  #define VSPEC1_TEMP_STA_DATA	GENMASK(9, 0)
-@@ -375,9 +383,34 @@ static int gpy_led_write(struct phy_devi
+@@ -381,6 +389,26 @@ static int gpy_led_write(struct phy_devi
  	return 0;
  }
  
@@ -64,9 +64,11 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 +
  static int gpy_config_init(struct phy_device *phydev)
  {
--	/* Nothing to configure. Configuration Requirement Placeholder */
-+	int ret;
-+
+ 	int ret;
+@@ -391,6 +419,10 @@ static int gpy_config_init(struct phy_de
+ 	if (ret < 0)
+ 		return ret;
+ 
 +	ret = gpy_config_downshift(phydev);
 +	if (ret)
 +		return ret;

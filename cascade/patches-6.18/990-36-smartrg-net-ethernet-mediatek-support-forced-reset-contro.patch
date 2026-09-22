@@ -33,7 +33,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  		schedule_work(&eth->pending_work);
  
  out:
-@@ -5966,6 +5967,7 @@ static int mtk_probe(struct platform_dev
+@@ -5978,6 +5979,7 @@ static int mtk_probe(struct platform_dev
  
  	eth->rx_dim.mode = DIM_CQ_PERIOD_MODE_START_FROM_EQE;
  	INIT_WORK(&eth->rx_dim.work, mtk_dim_rx);
@@ -43,7 +43,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	eth->tx_dim.mode = DIM_CQ_PERIOD_MODE_START_FROM_EQE;
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
-@@ -1481,6 +1481,7 @@ struct mtk_eth {
+@@ -1483,6 +1483,7 @@ struct mtk_eth {
  
  	struct {
  		struct delayed_work monitor_work;

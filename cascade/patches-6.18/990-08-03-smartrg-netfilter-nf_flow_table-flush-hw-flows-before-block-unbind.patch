@@ -25,7 +25,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/include/net/netfilter/nf_flow_table.h
 +++ b/include/net/netfilter/nf_flow_table.h
-@@ -312,6 +312,7 @@ void nf_flow_table_gc_cleanup(struct nf_
+@@ -313,6 +313,7 @@ void nf_flow_table_gc_cleanup(struct nf_
  void nf_flow_table_cleanup(struct net_device *dev);
  
  int nf_flow_table_init(struct nf_flowtable *flow_table);
@@ -35,7 +35,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  void flow_offload_teardown(struct flow_offload *flow);
 --- a/net/netfilter/nf_flow_table_core.c
 +++ b/net/netfilter/nf_flow_table_core.c
-@@ -930,6 +930,24 @@ static struct notifier_block flow_offloa
+@@ -932,6 +932,24 @@ static struct notifier_block flow_offloa
  };
  #endif
  

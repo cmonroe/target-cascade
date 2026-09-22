@@ -15,7 +15,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
-@@ -1658,6 +1658,14 @@ static inline u32 mtk_get_ib1_pkt_type(s
+@@ -1660,6 +1660,14 @@ static inline u32 mtk_get_ib1_pkt_type(s
  	return FIELD_GET(MTK_FOE_IB1_PACKET_TYPE, val);
  }
  

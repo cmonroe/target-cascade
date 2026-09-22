@@ -69,7 +69,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	mask = mtk_qtx_sch_is_v3_layout(eth) ? MTK_QTX_SCH_MAX_RATE_EN_V3
  					     : MTK_QTX_SCH_MAX_RATE_EN;
-@@ -5949,6 +5955,7 @@ static int mtk_probe(struct platform_dev
+@@ -5961,6 +5967,7 @@ static int mtk_probe(struct platform_dev
  	spin_lock_init(&eth->tx_irq_lock);
  	spin_lock_init(&eth->rx_irq_lock);
  	spin_lock_init(&eth->dim_lock);
@@ -77,7 +77,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	eth->rx_dim.mode = DIM_CQ_PERIOD_MODE_START_FROM_EQE;
  	INIT_WORK(&eth->rx_dim.work, mtk_dim_rx);
-@@ -6181,6 +6188,8 @@ static int mtk_probe(struct platform_dev
+@@ -6193,6 +6200,8 @@ static int mtk_probe(struct platform_dev
  			if (err)
  				goto err_deinit_ppe;
  		}
@@ -117,7 +117,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  /* QDMA TX Scheduler Rate Control Register */
  #define MTK_QDMA_TX_SCH_MAX_WFQ		BIT(15)
  
-@@ -1268,6 +1279,7 @@ struct mtk_reg_map {
+@@ -1270,6 +1281,7 @@ struct mtk_reg_map {
  		u32	fc_th;		/* flow control */
  		u32	int_grp;
  		u32	hred;		/* interrupt mask */
@@ -125,7 +125,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		u32	ctx_ptr;	/* tx acquire cpu pointer */
  		u32	dtx_ptr;	/* tx acquire dma pointer */
  		u32	crx_ptr;	/* tx release cpu pointer */
-@@ -1460,6 +1472,14 @@ struct mtk_eth {
+@@ -1462,6 +1474,14 @@ struct mtk_eth {
  		u8 qdma_hang_count;
  		u8 adma_hang_count;
  	} reset;
@@ -140,7 +140,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  };
  
  /* struct mtk_mac -	the structure that holds the info about the MACs of the
-@@ -1712,5 +1732,6 @@ static inline bool mtk_qtx_sch_is_v3_lay
+@@ -1714,5 +1734,6 @@ static inline bool mtk_qtx_sch_is_v3_lay
  }
  
  bool mtk_queue_has_rate_cap(struct mtk_eth *eth, unsigned int idx);

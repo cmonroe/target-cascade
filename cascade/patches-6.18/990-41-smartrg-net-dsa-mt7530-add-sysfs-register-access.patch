@@ -34,7 +34,7 @@ Subject: [PATCH] OWRT-6281 mtk reg rd wr added
  }
  
  static void
-@@ -3198,6 +3200,86 @@ static const struct phylink_pcs_ops mt75
+@@ -3206,6 +3208,86 @@ static const struct phylink_pcs_ops mt75
  	.pcs_an_restart = mt7530_pcs_an_restart,
  };
  
@@ -121,7 +121,7 @@ Subject: [PATCH] OWRT-6281 mtk reg rd wr added
  static int
  mt753x_setup(struct dsa_switch *ds)
  {
-@@ -3493,6 +3575,10 @@ mt7530_probe_common(struct mt7530_priv *
+@@ -3501,6 +3583,10 @@ mt7530_probe_common(struct mt7530_priv *
  	priv->mib_work_started = false;
  	memset(priv->stats, 0, sizeof(priv->stats));
  

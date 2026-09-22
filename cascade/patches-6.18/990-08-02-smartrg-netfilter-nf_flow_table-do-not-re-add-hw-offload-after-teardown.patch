@@ -19,7 +19,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/net/netfilter/nf_flow_table_core.c
 +++ b/net/netfilter/nf_flow_table_core.c
-@@ -424,7 +424,8 @@ void flow_offload_refresh(struct nf_flow
+@@ -426,7 +426,8 @@ void flow_offload_refresh(struct nf_flow
  		return;
  
  	if (likely(!nf_flowtable_hw_offload(flow_table)) ||

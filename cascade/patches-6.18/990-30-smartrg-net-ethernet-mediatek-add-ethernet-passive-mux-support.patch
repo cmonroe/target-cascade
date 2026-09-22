@@ -311,7 +311,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  
  	/*
  	 * Initialize the DSA user-port queue map to an identity mapping
-@@ -5578,7 +5818,7 @@ static int mtk_setup_legacy_sram(struct
+@@ -5590,7 +5830,7 @@ static int mtk_setup_legacy_sram(struct
  static int mtk_probe(struct platform_device *pdev)
  {
  	struct resource *res = NULL;
@@ -320,7 +320,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	struct mtk_eth *eth;
  	int err, i;
  
-@@ -5805,6 +6045,26 @@ static int mtk_probe(struct platform_dev
+@@ -5817,6 +6057,26 @@ static int mtk_probe(struct platform_dev
  			goto err_free_dev;
  	}
  
@@ -347,7 +347,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	if (eth->soc->offload_version) {
  		u8 ppe_num = eth->soc->ppe_num;
  
-@@ -5864,6 +6124,7 @@ err_unreg_netdev:
+@@ -5876,6 +6136,7 @@ err_unreg_netdev:
  	mtk_unreg_dev(eth);
  err_deinit_ppe:
  	mtk_ppe_deinit(eth);
@@ -355,7 +355,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	mtk_mdio_cleanup(eth);
  err_free_dev:
  	mtk_free_dev(eth);
-@@ -5900,6 +6161,7 @@ static void mtk_remove(struct platform_d
+@@ -5912,6 +6173,7 @@ static void mtk_remove(struct platform_d
  	mtk_cleanup(eth);
  	free_netdev(eth->dummy_dev);
  	mtk_mdio_cleanup(eth);
@@ -373,7 +373,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  
  struct mtk_xdp_stats {
  	u64 rx_xdp_redirect;
-@@ -1385,6 +1386,7 @@ struct mtk_eth {
+@@ -1387,6 +1388,7 @@ struct mtk_eth {
  	struct net_device		*dummy_dev;
  	struct net_device		*netdev[MTK_MAX_DEVS];
  	struct mtk_mac			*mac[MTK_MAX_DEVS];
@@ -381,7 +381,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	int				irq[MTK_FE_IRQ_NUM];
  	u32				msg_enable;
  	unsigned long			sysclk;
-@@ -1447,6 +1449,9 @@ struct mtk_eth {
+@@ -1449,6 +1451,9 @@ struct mtk_eth {
   * @id:			The number of the MAC
   * @interface:		Interface mode kept for detecting change in hw settings
   * @of_node:		Our devicetree node
@@ -391,7 +391,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
   * @hw:			Backpointer to our main datastruture
   * @hw_stats:		Packet statistics counter
   */
-@@ -1456,6 +1461,7 @@ struct mtk_mac {
+@@ -1458,6 +1463,7 @@ struct mtk_mac {
  	u8				ppe_idx;
  	int				speed;
  	struct device_node		*of_node;
@@ -399,7 +399,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	struct phylink			*phylink;
  	struct phylink_config		phylink_config;
  	struct phylink_pcs		*current_pcs;
-@@ -1470,6 +1476,28 @@ struct mtk_mac {
+@@ -1472,6 +1478,28 @@ struct mtk_mac {
  	u8				dsa_port_rank[MTK_DSA_USER_PORT_MAX];
  };
  

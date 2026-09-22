@@ -27,7 +27,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/include/net/netfilter/nf_flow_table.h
 +++ b/include/net/netfilter/nf_flow_table.h
-@@ -204,6 +204,9 @@ struct flow_offload {
+@@ -205,6 +205,9 @@ struct flow_offload {
  
  unsigned long flow_offload_get_timeout(struct flow_offload *flow);
  
@@ -64,7 +64,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static DEFINE_MUTEX(flowtable_lock);
  static LIST_HEAD(flowtables);
  
-@@ -329,6 +340,39 @@ unsigned long flow_offload_get_timeout(s
+@@ -330,6 +341,39 @@ unsigned long flow_offload_get_timeout(s
  	return timeout;
  }
  
@@ -123,7 +123,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
 --- a/net/netfilter/xt_FLOWOFFLOAD.c
 +++ b/net/netfilter/xt_FLOWOFFLOAD.c
-@@ -517,6 +517,9 @@ flowoffload_tg(struct sk_buff *skb, cons
+@@ -523,6 +523,9 @@ flowoffload_tg(struct sk_buff *skb, cons
  	if (!devs[dir] || !devs[!dir])
  		return XT_CONTINUE;
  

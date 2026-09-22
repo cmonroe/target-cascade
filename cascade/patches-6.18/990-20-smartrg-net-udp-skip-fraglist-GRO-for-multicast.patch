@@ -18,7 +18,7 @@ intended beneficiary of fraglist GRO, is unaffected.
 Signed-off-by: Chad Monroe <chad@monroe.io>
 --- a/net/ipv4/udp_offload.c
 +++ b/net/ipv4/udp_offload.c
-@@ -875,12 +875,20 @@ INDIRECT_CALLABLE_SCOPE
+@@ -877,12 +877,20 @@ INDIRECT_CALLABLE_SCOPE
  struct sk_buff *udp4_gro_receive(struct list_head *head, struct sk_buff *skb)
  {
  	struct udphdr *uh = udp_gro_udphdr(skb);

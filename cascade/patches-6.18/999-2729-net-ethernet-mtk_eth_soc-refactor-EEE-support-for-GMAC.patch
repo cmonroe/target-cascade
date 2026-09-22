@@ -128,7 +128,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  #define MAC_EEE_CKG_TXIDLE		BIT(3)
  #define MAC_EEE_CKG_RXLPI		BIT(2)
  #define MAC_EEE_LPI_MODE		BIT(0)
-@@ -1627,6 +1628,8 @@ struct mtk_mac {
+@@ -1630,6 +1631,8 @@ struct mtk_mac {
  	struct notifier_block		device_notifier;
  	u8				dsa_queue_base;
  	u8				dsa_port_rank[MTK_DSA_USER_PORT_MAX];

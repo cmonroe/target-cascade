@@ -22,7 +22,7 @@ Signed-off-by: René van Dorst <opensource@vdorst.com>
  	const __be32 *_id = of_get_property(np, "reg", NULL);
  	phy_interface_t phy_mode;
  	struct phylink *phylink;
-@@ -5711,6 +5712,9 @@ no_pcs:
+@@ -5723,6 +5724,9 @@ no_pcs:
  						NETDEV_XDP_ACT_NDO_XMIT |
  						NETDEV_XDP_ACT_NDO_XMIT_SG;
  

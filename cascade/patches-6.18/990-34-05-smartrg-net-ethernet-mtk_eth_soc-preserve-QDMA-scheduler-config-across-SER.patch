@@ -109,7 +109,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  enum mkt_eth_capabilities {
  	MTK_RGMII_BIT = 0,
  	MTK_TRGMII_BIT,
-@@ -1402,6 +1419,7 @@ struct mtk_eth {
+@@ -1404,6 +1421,7 @@ struct mtk_eth {
  	struct mtk_rx_ring		rx_ring_qdma;
  	struct napi_struct		tx_napi;
  	struct napi_struct		rx_napi;

@@ -18,7 +18,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
-@@ -1651,5 +1651,26 @@ int mtk_flow_offload_cmd(struct mtk_eth
+@@ -1653,5 +1653,26 @@ int mtk_flow_offload_cmd(struct mtk_eth
  void mtk_flow_offload_cleanup(struct mtk_eth *eth, struct list_head *list);
  void mtk_eth_set_dma_device(struct mtk_eth *eth, struct device *dma_dev);
  

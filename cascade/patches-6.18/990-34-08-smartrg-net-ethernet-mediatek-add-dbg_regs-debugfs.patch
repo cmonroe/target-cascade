@@ -74,7 +74,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  #define MTK_FE_GDM1_FSM		0x228
  #define MTK_FE_GDM2_FSM		0x22C
  #define MTK_FE_GDM3_FSM		0x23C
-@@ -1287,10 +1289,12 @@ struct mtk_reg_map {
+@@ -1289,10 +1291,12 @@ struct mtk_reg_map {
  		u32	delay_irq;	/* delay interrupt */
  		u32	fc_th;		/* flow control */
  		u32	int_grp;

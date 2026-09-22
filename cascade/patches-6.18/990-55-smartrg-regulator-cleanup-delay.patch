@@ -17,12 +17,12 @@ Signed-off-by: Piotr Kubik <piotr.kubik@adtran.com>
 ---
 --- a/drivers/regulator/core.c
 +++ b/drivers/regulator/core.c
-@@ -6605,7 +6605,7 @@ static int __init regulator_init_complet
- 	 * command line option might be useful.
+@@ -6607,7 +6607,7 @@ static int __init regulator_init_complet
  	 */
- 	schedule_delayed_work(&regulator_init_complete_work,
--			      msecs_to_jiffies(30000));
-+			      msecs_to_jiffies(180000));
+ 	queue_delayed_work(system_freezable_wq,
+ 			   &regulator_init_complete_work,
+-			   msecs_to_jiffies(30000));
++			   msecs_to_jiffies(180000));
  
  	return 0;
  }

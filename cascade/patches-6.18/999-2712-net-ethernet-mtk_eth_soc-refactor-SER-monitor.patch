@@ -319,7 +319,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor SER monitor
  /* GMAC Identifier */
  enum mtk_gmac_id {
  	MTK_GMAC1_ID = 0,
-@@ -1557,10 +1567,21 @@ struct mtk_eth {
+@@ -1560,10 +1570,21 @@ struct mtk_eth {
  	struct {
  		struct delayed_work monitor_work;
  		atomic_t force;

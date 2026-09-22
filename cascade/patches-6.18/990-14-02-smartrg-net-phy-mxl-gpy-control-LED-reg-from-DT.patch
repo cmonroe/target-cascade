@@ -18,8 +18,8 @@ although it is a considerable extra amount of work.
 
 Signed-off-by: David Bauer <mail@david-bauer.net>
 ---
- drivers/net/phy/mxl-gpy.c | 37 ++++++++++++++++++++++++++++++++++++-
- 1 file changed, 36 insertions(+), 1 deletion(-)
+ drivers/net/phy/mxl-gpy.c |   40 ++++++++++++++++++++++++++++++++++++++--
+ 1 file changed, 38 insertions(+), 2 deletions(-)
 
 --- a/drivers/net/phy/mxl-gpy.c
 +++ b/drivers/net/phy/mxl-gpy.c
@@ -31,7 +31,7 @@ Signed-off-by: David Bauer <mail@david-bauer.net>
  #include <linux/phy.h>
  #include <linux/polynomial.h>
  #include <linux/property.h>
-@@ -344,10 +345,39 @@ static int gpy_soft_reset(struct phy_dev
+@@ -350,11 +351,46 @@ static int gpy_soft_reset(struct phy_dev
  	return ret;
  }
  
@@ -66,8 +66,16 @@ Signed-off-by: David Bauer <mail@david-bauer.net>
 +
  static int gpy_config_init(struct phy_device *phydev)
  {
- 	/* Nothing to configure. Configuration Requirement Placeholder */
--	return 0;
++	int ret;
++
+ 	/* Count MDI RX errors (SymbolErrorDuringCarrier) */
+-	return phy_write(phydev, PHY_ERRCNT,
+-			 FIELD_PREP(PHY_ERRCNT_SEL, PHY_ERRCNT_SEL_RXERR));
++	ret = phy_write(phydev, PHY_ERRCNT,
++			FIELD_PREP(PHY_ERRCNT_SEL, PHY_ERRCNT_SEL_RXERR));
++	if (ret < 0)
++		return ret;
++
 +	return gpy_led_write(phydev);
  }
  

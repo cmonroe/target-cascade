@@ -4,7 +4,7 @@
 
 --- a/drivers/net/usb/rndis_host.c
 +++ b/drivers/net/usb/rndis_host.c
-@@ -643,6 +643,13 @@ static const struct driver_info asr_rndi
+@@ -647,6 +647,13 @@ static const struct driver_info asr_rndi
  /*-------------------------------------------------------------------------*/
  
  static const struct usb_device_id	products [] = {

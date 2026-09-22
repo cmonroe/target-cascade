@@ -16,7 +16,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -6199,6 +6199,7 @@ static int mtk_probe(struct platform_dev
+@@ -6211,6 +6211,7 @@ static int mtk_probe(struct platform_dev
  		}
  
  		mtk_eth_dbg_init(eth);
