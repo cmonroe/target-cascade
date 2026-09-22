@@ -64,7 +64,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	netif_tx_start_all_queues(netdev);
  	err = airoha_set_vip_for_gdm_port(dev, true);
-@@ -2271,8 +2286,10 @@ static int airoha_dev_stop(struct net_de
+@@ -2265,8 +2280,10 @@ static int airoha_dev_stop(struct net_de
  	airoha_qdma_stop(qdma);
  	airoha_update_netdev_features(dev);
  

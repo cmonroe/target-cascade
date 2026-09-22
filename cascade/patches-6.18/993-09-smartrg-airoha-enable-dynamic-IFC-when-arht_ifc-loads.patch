@@ -29,10 +29,12 @@ a module runs before its notifier.
 The /proc commands use the same two functions, so "enable" and
 "disable" keep their behaviour.
 
+Also add bbst to the default app list.
+
 Signed-off-by: Chad Monroe <chad@monroe.io>
 ---
- drivers/net/ethernet/airoha/arht_dynamic_ifc.c |  122 +++++++++++++++++--------
- 1 file changed, 86 insertions(+), 36 deletions(-)
+ drivers/net/ethernet/airoha/arht_dynamic_ifc.c |  123 +++++++++++++++++--------
+ 1 file changed, 87 insertions(+), 36 deletions(-)
 
 --- a/drivers/net/ethernet/airoha/arht_dynamic_ifc.c
 +++ b/drivers/net/ethernet/airoha/arht_dynamic_ifc.c
@@ -169,12 +171,14 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	} else if (!strcmp(cmd, "debug")) {
  		if (sscanf(str, "%31s %d", cmd, &val) == 2) {
  			if (val) {
-@@ -1122,11 +1168,15 @@ static int __init arht_dynamic_ifc_init(
+@@ -1121,12 +1167,17 @@ static int __init arht_dynamic_ifc_init(
+ 
  	dynamic_ifc_app_list_add("iperf3");
  	dynamic_ifc_app_list_add("ookla");
- 
-+	register_module_notifier(&dynamic_ifc_module_nb);
++	dynamic_ifc_app_list_add("bbst");
 +
++	register_module_notifier(&dynamic_ifc_module_nb);
+ 
  	return 0;
  }
  

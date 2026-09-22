@@ -16,7 +16,7 @@ unaffected.
 
 --- a/drivers/net/ethernet/airoha/airoha_eth.c
 +++ b/drivers/net/ethernet/airoha/airoha_eth.c
-@@ -2176,6 +2176,11 @@ static int airoha_dev_open(struct net_de
+@@ -2219,6 +2219,11 @@ static int airoha_dev_open(struct net_de
  		}
  
  		phylink_start(dev->phylink);
@@ -28,7 +28,7 @@ unaffected.
  	}
  
  	netif_tx_start_all_queues(netdev);
-@@ -2235,6 +2240,8 @@ static int airoha_dev_stop(struct net_de
+@@ -2283,6 +2288,8 @@ static int airoha_dev_stop(struct net_de
  	if (airoha_is_phy_external(port)) {
  		phylink_stop(dev->phylink);
  		phylink_disconnect_phy(dev->phylink);

@@ -147,7 +147,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	seq_printf(m, "Apps: ");
  	spin_lock_irqsave(&dynamic_ifc_lock, flags);
-@@ -1089,17 +1022,6 @@ static ssize_t dynamic_ifc_write_proc(st
+@@ -1100,17 +1033,6 @@ static ssize_t dynamic_ifc_write_proc(st
  			}
  			pr_info("arht_dynamic_ifc: debug_level = %d\n", debug_level);
  		}

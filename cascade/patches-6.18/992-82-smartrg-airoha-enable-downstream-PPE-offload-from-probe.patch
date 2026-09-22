@@ -25,7 +25,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/airoha/airoha_eth.c
 +++ b/drivers/net/ethernet/airoha/airoha_eth.c
-@@ -2176,7 +2176,7 @@ static int airoha_dev_open(struct net_de
+@@ -2219,7 +2219,7 @@ static int airoha_dev_open(struct net_de
  	airoha_qdma_start(qdma);
  
  	if (!airoha_is_lan_gdm_dev(dev) &&
@@ -34,7 +34,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		pse_port = FE_PSE_PORT_PPE2;
  	airoha_set_gdm_port_fwd_cfg(eth, REG_GDM_FWD_CFG(port->id),
  				    pse_port);
-@@ -4188,6 +4188,33 @@ static int airoha_register_gdm_devices(s
+@@ -4186,6 +4186,33 @@ static int airoha_register_gdm_devices(s
  
  	set_bit(DEV_STATE_REGISTERED, &eth->state);
  
