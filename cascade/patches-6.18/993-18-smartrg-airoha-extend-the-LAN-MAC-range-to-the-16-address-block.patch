@@ -1,0 +1,46 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Wed, 23 Sep 2026 13:56:36 -0700
+Subject: [PATCH] net: airoha: extend the LAN MAC range to the 16-address block
+
+The FE treats a LAN frame as routed only when its destination MAC is
+in the LAN range. The driver builds that range from the MACs of the
+GDM ports. On SmartOS the LAN bridge uses base + 1, which is outside
+the range. The PPE then learned routed LAN traffic as L2 bridge flows,
+and LAN to WAN flows were never offloaded.
+
+The LAN range now covers the whole block of 16 addresses that SmartOS
+assigns, base to base + 15. The rule is static, because SmartOS always
+assigns the block from a base that ends in 0.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/airoha_eth.c |    7 +++++++
+ drivers/net/ethernet/airoha/airoha_eth.h |    1 +
+ 2 files changed, 8 insertions(+)
+
+--- a/drivers/net/ethernet/airoha/airoha_eth.c
++++ b/drivers/net/ethernet/airoha/airoha_eth.c
+@@ -140,6 +140,13 @@ static int airoha_set_macaddr(struct air
+ 		return -EINVAL;
+ 	}
+ 
++	/* SmartOS gives each device 16 addresses from a base that ends in 0.
++	 * LAN hosts use base + 1 to base + 15 (bridges, Wi-Fi BSSIDs) as the
++	 * router address, and those are not the addresses of the GDM ports.
++	 */
++	if (airoha_is_lan_gdm_dev(dev))
++		lmax = max(lmax, lmin | AIROHA_LAN_MAC_BLOCK_MASK);
++
+ 	reg = airoha_is_lan_gdm_dev(dev) ? REG_FE_LAN_MAC_H : REG_FE_WAN_MAC_H;
+ 	val = (addr[0] << 16) | (addr[1] << 8) | addr[2];
+ 	airoha_fe_wr(eth, reg, val);
+--- a/drivers/net/ethernet/airoha/airoha_eth.h
++++ b/drivers/net/ethernet/airoha/airoha_eth.h
+@@ -78,6 +78,7 @@
+ #define MTK_HDR_XMIT_TAGGED_TPID_88A8	2
+ #define AIROHA_HEADROOM (NET_SKB_PAD + NET_IP_ALIGN)
+ #define AIROHA_MAC_ADDR_NUM		7
++#define AIROHA_LAN_MAC_BLOCK_MASK	0xf
+ enum {
+ 	QDMA_INT_REG_IDX0,
+ 	QDMA_INT_REG_IDX1,
