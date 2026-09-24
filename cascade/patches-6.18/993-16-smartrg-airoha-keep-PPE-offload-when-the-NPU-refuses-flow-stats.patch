@@ -1,0 +1,84 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Wed, 23 Sep 2026 13:51:21 -0700
+Subject: [PATCH] net: airoha: keep PPE offload when the NPU refuses flow stats
+
+With flow stats enabled, the offload setup sends the flow stats
+request to the NPU and stops when that request fails. An NPU firmware
+built without flow counters refuses the request. No flow is then
+offloaded, and each offload attempt initializes the NPU PPE again.
+
+A refused request now logs one warning, and offload continues without
+flow counters. The PPE then keeps its full SRAM table and does not
+send flows through the NPU. The running firmware decides, because the
+kernel option and the firmware build can differ.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/airoha_eth.h |    1 
+ drivers/net/ethernet/airoha/airoha_ppe.c |   24 +++++++++++----------
+ 2 files changed, 14 insertions(+), 11 deletions(-)
+
+--- a/drivers/net/ethernet/airoha/airoha_eth.h
++++ b/drivers/net/ethernet/airoha/airoha_eth.h
+@@ -695,6 +695,7 @@ struct airoha_ppe {
+ 
+ 	struct airoha_foe_stats *foe_stats;
+ 	dma_addr_t foe_stats_dma;
++	bool flow_stats;
+ 
+ 	struct dentry *debugfs_dir;
+ };
+--- a/drivers/net/ethernet/airoha/airoha_ppe.c
++++ b/drivers/net/ethernet/airoha/airoha_ppe.c
+@@ -44,10 +44,7 @@ static const struct rhashtable_params ai
+ 
+ static int airoha_ppe_get_num_stats_entries(struct airoha_ppe *ppe)
+ {
+-	if (!IS_ENABLED(CONFIG_NET_AIROHA_FLOW_STATS))
+-		return -EOPNOTSUPP;
+-
+-	if (airoha_is_7583(ppe->eth))
++	if (!ppe->flow_stats)
+ 		return -EOPNOTSUPP;
+ 
+ 	return PPE_STATS_NUM_ENTRIES;
+@@ -157,11 +154,10 @@ static void airoha_ppe_hw_init(struct ai
+ 		sram_ppe_num_data_entries -= sram_num_stats_entries;
+ 	sram_ppe_num_data_entries =
+ 		PPE_RAM_NUM_ENTRIES_SHIFT(sram_ppe_num_data_entries);
+-		
+-#ifdef CONFIG_NET_AIROHA_FLOW_STATS	
+-	airoha_fe_rmw(eth, PSE_FC_CFG, PSE_PORT6_SHARE_DIS, 
+-			FIELD_PREP(PSE_PORT6_SHARE_DIS, 0));
+-#endif
++
++	if (ppe->flow_stats)
++		airoha_fe_rmw(eth, PSE_FC_CFG, PSE_PORT6_SHARE_DIS,
++			      FIELD_PREP(PSE_PORT6_SHARE_DIS, 0));
+ 
+ 	for (i = 0; i < eth->soc->num_ppe; i++) {
+ 		airoha_fe_wr(eth, REG_PPE_TB_BASE(i),
+@@ -1538,8 +1534,12 @@ int airoha_ppe_offload_setup(struct airo
+ 	if (ppe_num_stats_entries > 0) {
+ 		err = npu->ops.ppe_init_stats(npu, ppe->foe_stats_dma,
+ 					      ppe_num_stats_entries);
+-		if (err)
+-			goto error_npu_put;
++		if (err) {
++			dev_warn(eth->dev,
++				 "NPU firmware refused flow stats setup (%d), offload runs without flow counters\n",
++				 err);
++			ppe->flow_stats = false;
++		}
+ 	}
+ 
+ 	airoha_ppe_hw_init(ppe);
+@@ -1703,6 +1703,8 @@ int airoha_ppe_init(struct airoha_eth *e
+ 	ppe->dev.ops.check_tx_skb = arht_ppe_check_tx_skb;
+ 	ppe->dev.priv = ppe;
+ 	ppe->eth = eth;
++	ppe->flow_stats = IS_ENABLED(CONFIG_NET_AIROHA_FLOW_STATS) &&
++			  !airoha_is_7583(eth);
+ 
+ 	ppe_num_entries = airoha_ppe_get_total_num_entries(ppe);
+ 	foe_size = ppe_num_entries * sizeof(struct airoha_foe_entry);
