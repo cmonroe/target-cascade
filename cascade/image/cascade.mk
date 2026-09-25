@@ -77,8 +77,9 @@ TARGET_DEVICES := polecat
 
 define Build/SrgFit
 
-	# lzma compress the dtb files
-	$(eval $(foreach S,$(DEVICE_DTS),$(shell $(STAGING_DIR_HOST)/bin/lzma e -lc1 -lp2 -pb2 $(KDIR)/image-$(S).dtb $(KDIR)/image-$(S).dtb.lzma)))
+	printf '%s\n' $(DEVICE_DTS) | xargs -P $$(nproc) -I {} \
+		$(STAGING_DIR_HOST)/bin/lzma e -lc1 -lp2 -pb2 \
+		$(KDIR)/image-{}.dtb $(KDIR)/image-{}.dtb.lzma
 
 	srg-mkits.sh -o $@.its -A $(LINUX_KARCH)  -v $(LINUX_VERSION) \
 	   	-i "k1" -k $@ -a $(KERNEL_LOADADDR) -e $(if $(KERNEL_ENTRY),$(KERNEL_ENTRY),$(KERNEL_LOADADDR)) -C lzma -h "crc32" -h "sha1" \
@@ -165,14 +166,7 @@ endef
 
 define Build/SrgDiskSquashfs
 	@echo "Creating SRG squashfs Image"
-	mkdir -p $(TARGET_DIR)/mnt/FLASH
-	mkdir -p $(TARGET_DIR)/mnt/boot
-	mkdir -p $(TARGET_DIR)/FLASH
-	mkdir -p $(TARGET_DIR)/boot
-	mkdir -p $(TARGET_DIR)/Boot
-	$(STAGING_DIR_HOST)/bin/mksquashfs4 $(TARGET_DIR) $(KDIR)/root.squashfs.run \
-		-nopad -noappend -root-owned \
-		-comp $(SQUASHFSCOMP) $(SQUASHFSOPT)
+	$(CP) $(KDIR)/root.squashfs $(KDIR)/root.squashfs.run
 	$(CP) $(KDIR)/root.squashfs.run $(KDIR)/root.squashfs.run.bin
 	dd if=/dev/zero bs=128k count=1 >> $(KDIR)/root.squashfs.run.bin
 	sha256sum  $(KDIR)/root.squashfs.run.bin  | cut -d ' ' -f 1 | xargs echo -n  >> $(KDIR)/root.squashfs.run.bin
@@ -196,11 +190,14 @@ define Build/SrgDisk
     $(call Build/SrgDiskSquashfs)
 endef
 
+# The two .sos images share no files, and the xz run of each one keeps only
+# a few CPUs busy, so build them at the same time.
 define Build/srgImage
 	@echo "Build generic image and .run image"
 	bash -c "$(SRGRUN) SRGImages $(BINNAME).bin $(VERNAME)"
-	bash -c "CDT= $(SRGRUN) RUNIMG $(BINNAME) $(VERNAME) $(IMG_PREFIX)"
-	bash -c "CDT=factory $(SRGRUN) RUNIMG $(BINNAME) $(VERNAME) $(IMG_PREFIX)"
+	bash -c "CDT= $(SRGRUN) RUNIMG $(BINNAME) $(VERNAME) $(IMG_PREFIX)" & pid=$$!; \
+	bash -c "CDT=factory $(SRGRUN) RUNIMG $(BINNAME) $(VERNAME) $(IMG_PREFIX)"; ret=$$?; \
+	wait $$pid && exit $$ret
 endef
 
 define Build/srgImageRun

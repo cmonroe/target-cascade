@@ -28,6 +28,13 @@ endef
 include atf-artifacts.mk
 include cascade.mk
 
+# Create the mount points before the generic root.squashfs, so that it can
+# serve as the .run root file system in Build/SrgDiskSquashfs.
+define Image/Prepare
+	mkdir -p $(TARGET_DIR)/mnt/FLASH $(TARGET_DIR)/mnt/boot \
+		$(TARGET_DIR)/FLASH $(TARGET_DIR)/boot $(TARGET_DIR)/Boot
+endef
+
 define Image/Build
 	$(call Image/Build/$(1),$(1))
 endef
