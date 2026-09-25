@@ -1,0 +1,227 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Thu, 24 Sep 2026 13:01:57 -0700
+Subject: [PATCH] net: airoha: count flow deltas from the NPU low words
+
+The NPU keeps the low 32 bits of a flow counter in its SRAM and
+stores the carry to host memory first, with no fence. So a joined
+read near a wrap can be 4 GiB wrong, and a re-bind reported up to
+4 GiB too much because the bind kept the old baseline. The clear at
+each bind also raced the NPU, and Wi-Fi flows skipped it, so they
+inherited the counts of the last flow on their index.
+
+Each flow now reports the modular delta of the low words, from the
+counter value at its bind. The counts on an index go to its last
+holder, unless another entry holds it bound by then; those counts
+are its own. One read interval must carry less than 4 GiB: about
+8 Gbit/s per flow at the default flowtable timeout, and less with a
+longer one. Without NPU counters the vendor QDMA counters stay the
+source.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/airoha_eth.h |    3 
+ drivers/net/ethernet/airoha/airoha_ppe.c |  142 +++++++++++++++++++--
+ 2 files changed, 133 insertions(+), 12 deletions(-)
+
+--- a/drivers/net/ethernet/airoha/airoha_eth.h
++++ b/drivers/net/ethernet/airoha/airoha_eth.h
+@@ -589,7 +589,8 @@ struct airoha_flow_table_entry {
+ 	struct hlist_node l2_subflow_node; /* PPE L2 subflow entry */
+ 	u32 hash;
+ 
+-	struct airoha_foe_stats64 stats;
++	struct airoha_foe_stats64 stats; /* not yet reported */
++	struct airoha_foe_stats stats_base; /* NPU low words at the last read */
+ 	enum airoha_flow_entry_type type;
+ 
+ 	enum magic e_magic; /* egress interface */
+--- a/drivers/net/ethernet/airoha/airoha_ppe.c
++++ b/drivers/net/ethernet/airoha/airoha_ppe.c
+@@ -670,8 +670,108 @@ static void airoha_ppe_foe_flow_stats_re
+ 		airoha_ppe_foe_flow_stat_entry_reset(ppe, npu, i);
+ }
+ 
++/* Only the low 32-bit words live in NPU SRAM. The NPU writes the high words
++ * to host memory with no ordering against the low words, so a joined value
++ * can be off by 2^32. A delta of the low words is exact while one read
++ * interval carries less than 4 GiB.
++ */
++static bool airoha_ppe_foe_flow_stats_read(struct airoha_ppe *ppe, u32 hash,
++					   struct airoha_foe_stats *lo)
++{
++	int ppe_num_stats_entries;
++	struct airoha_npu *npu;
++	bool found = false;
++	u32 index;
++
++	ppe_num_stats_entries = airoha_ppe_get_total_num_stats_entries(ppe);
++	if (ppe_num_stats_entries < 0)
++		return false;
++
++	if (airoha_ppe_foe_get_flow_stats_index(ppe, hash, &index) ||
++	    index >= ppe_num_stats_entries)
++		return false;
++
++	rcu_read_lock();
++	npu = rcu_dereference(ppe->eth->npu);
++	if (npu) {
++		lo->bytes = readl(&npu->stats[index].bytes);
++		lo->packets = readl(&npu->stats[index].packets);
++		found = true;
++	}
++	rcu_read_unlock();
++
++	return found;
++}
++
++static void airoha_ppe_foe_flow_stats_collect(struct airoha_ppe *ppe,
++					      struct airoha_flow_table_entry *e)
++{
++	struct airoha_foe_stats lo;
++
++	lockdep_assert_held(&ppe_lock);
++
++	if (e->hash == 0xffff ||
++	    !airoha_ppe_foe_flow_stats_read(ppe, e->hash, &lo))
++		return;
++
++	e->stats.bytes += lo.bytes - e->stats_base.bytes;
++	e->stats.packets += lo.packets - e->stats_base.packets;
++	e->stats_base = lo;
++}
++
++/* Not every binder of a slot is in the bucket of the flow that lost it (the
++ * second hash function, vendor binds). Once another entry holds the slot
++ * bound, the counts since its bind are its own, so the flow gets none.
++ */
++static void airoha_ppe_foe_flow_stats_retire(struct airoha_ppe *ppe,
++					     struct airoha_flow_table_entry *e)
++{
++	struct airoha_foe_entry *hwe;
++
++	lockdep_assert_held(&ppe_lock);
++
++	if (e->hash == 0xffff)
++		return;
++
++	hwe = airoha_ppe_foe_get_entry_locked(ppe, e->hash);
++	if (hwe &&
++	    (FIELD_GET(AIROHA_FOE_IB1_BIND_STATE, hwe->ib1) !=
++	     AIROHA_FOE_STATE_BIND || airoha_ppe_foe_compare_entry(e, hwe)))
++		airoha_ppe_foe_flow_stats_collect(ppe, e);
++	e->hash = 0xffff;
++}
++
++/* The NPU never clears a counter: credit the index to the flow that owned it
++ * last, and start the new owner from the current value.
++ */
++static void airoha_ppe_foe_flow_stats_claim(struct airoha_ppe *ppe,
++					    struct airoha_flow_table_entry *e,
++					    u32 hash, u32 index)
++{
++	struct airoha_flow_table_entry *iter;
++
++	lockdep_assert_held(&ppe_lock);
++
++	hlist_for_each_entry(iter, &ppe->foe_flow[index], list) {
++		if (iter == e || iter->type != FLOW_TYPE_L4 ||
++		    iter->hash != hash)
++			continue;
++
++		airoha_ppe_foe_flow_stats_collect(ppe, iter);
++		iter->hash = 0xffff;
++	}
++
++	if (e->hash == hash) {
++		airoha_ppe_foe_flow_stats_collect(ppe, e);
++		return;
++	}
++
++	airoha_ppe_foe_flow_stats_retire(ppe, e);
++	if (!airoha_ppe_foe_flow_stats_read(ppe, hash, &e->stats_base))
++		e->stats_base = (struct airoha_foe_stats){};
++}
++
+ static void airoha_ppe_foe_flow_stats_update(struct airoha_ppe *ppe,
+-					     struct airoha_npu *npu,
+ 					     struct airoha_foe_entry *hwe,
+ 					     u32 hash)
+ {
+@@ -709,8 +809,6 @@ static void airoha_ppe_foe_flow_stats_up
+ 	if (pse_port == FE_PSE_PORT_CDM4)
+ 		return;
+ 
+-	airoha_ppe_foe_flow_stat_entry_reset(ppe, npu, index);
+-
+ 	val = FIELD_GET(AIROHA_FOE_CHANNEL | AIROHA_FOE_QID, *data);
+ 	*data = (*data & ~AIROHA_FOE_ACTDP) |
+ 		FIELD_PREP(AIROHA_FOE_ACTDP, val);
+@@ -841,7 +939,7 @@ int airoha_ppe_foe_commit_entry(struct a
+ 	}
+ 
+ 	if (!rx_wlan)
+-		airoha_ppe_foe_flow_stats_update(ppe, npu, hwe, hash);
++		airoha_ppe_foe_flow_stats_update(ppe, hwe, hash);
+ 
+ 	if (hash < sram_num_entries)
+ 		err = airoha_ppe_foe_commit_sram_entry(ppe, hash);
+@@ -1009,6 +1107,7 @@ static void airoha_ppe_foe_insert_entry(
+ 		    ppe->eth->extra_ops.tx_modified(e, hash))
+ 			goto unlock;
+ 
++		airoha_ppe_foe_flow_stats_claim(ppe, e, hash, index);
+ 		airoha_ppe_foe_commit_entry(ppe, &e->data, hash, rx_wlan);
+ 		commit_done = true;
+ 		e->hash = hash;
+@@ -1144,7 +1243,7 @@ static void airoha_ppe_foe_flow_entry_up
+ 
+ 	memcpy(&hwe, hwe_p, sizeof(*hwe_p));
+ 	if (!airoha_ppe_foe_compare_entry(e, &hwe)) {
+-		e->hash = 0xffff;
++		airoha_ppe_foe_flow_stats_retire(ppe, e);
+ 		goto unlock;
+ 	}
+ 
+@@ -1444,15 +1543,36 @@ static int airoha_ppe_flow_offload_stats
+ 	idle = airoha_ppe_entry_idle_time(eth->ppe, e);
+ 	f->stats.lastused = jiffies - idle * HZ;
+ 
+-	if (e->hash != 0xffff) {
+-		struct airoha_foe_stats64 stats = {};
++	/* Without NPU counters the vendor QDMA counters are the only source. */
++	if (!eth->ppe->flow_stats) {
++		if (e->hash != 0xffff) {
++			struct airoha_foe_stats64 stats = {};
++
++			airoha_ppe_foe_entry_get_stats(eth->ppe, e->hash, &stats);
++			f->stats.pkts += stats.packets - e->stats.packets;
++			f->stats.bytes += stats.bytes - e->stats.bytes;
++			e->stats = stats;
++		}
++		return 0;
++	}
+ 
+-		airoha_ppe_foe_entry_get_stats(eth->ppe, e->hash, &stats);
+-		f->stats.pkts += (stats.packets - e->stats.packets);
+-		f->stats.bytes += (stats.bytes - e->stats.bytes);
+-		e->stats = stats;
++	/* The vendor read also keeps its accounting reservation marked live. */
++	if (eth->extra_ops.conntrack_get_cnt && e->hash != 0xffff) {
++		struct airoha_foe_stats64 vendor = {};
++
++		eth->extra_ops.conntrack_get_cnt(e->hash, &vendor);
+ 	}
+ 
++	/* netfilter drops a delta with no packets, so keep bytes until one. */
++	spin_lock_bh(&ppe_lock);
++	airoha_ppe_foe_flow_stats_collect(eth->ppe, e);
++	if (e->stats.packets) {
++		f->stats.pkts += e->stats.packets;
++		f->stats.bytes += e->stats.bytes;
++		e->stats = (struct airoha_foe_stats64){};
++	}
++	spin_unlock_bh(&ppe_lock);
++
+ 	return 0;
+ }
+ 
