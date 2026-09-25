@@ -1,0 +1,145 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Thu, 24 Sep 2026 20:09:29 -0700
+Subject: [PATCH] net: ethernet: mtk_ppe: count each bind of a flow once
+
+The PPE can age a bound slot while the flow entry still names it.
+Each later stats read then adds the count of the slot to the total of
+the entry again. A re-bind or a detach in the rx path loses the count
+of the slot instead, so the next delta is negative.
+
+An entry now moves the count of its slot into its total once, when it
+leaves the slot and before a commit restarts that count. A routed flow
+keeps its count across a PPE ageing and a re-bind, and no count
+repeats.
+The move reads the MIB, because the slot can hold packets since the
+last read. The stats read copies the total under the lock, because
+the rx path now changes it.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/mediatek/mtk_ppe.c |   73 ++++++++++++++++++++------------
+ 1 file changed, 46 insertions(+), 27 deletions(-)
+
+--- a/drivers/net/ethernet/mediatek/mtk_ppe.c
++++ b/drivers/net/ethernet/mediatek/mtk_ppe.c
+@@ -647,6 +647,24 @@ static int __mtk_foe_entry_idle_time(str
+ 		return now - timestamp;
+ }
+ 
++/* A commit to a slot restarts its count, so an entry must move the count
++ * of its slot into prev_* once, when it leaves the slot.
++ */
++static struct mtk_foe_accounting *
++mtk_flow_entry_detach(struct mtk_ppe *ppe, struct mtk_flow_entry *entry)
++{
++	struct mtk_foe_accounting *acct;
++
++	acct = mtk_ppe_mib_entry_read(ppe, entry->hash);
++	if (acct) {
++		entry->prev_packets += acct->packets;
++		entry->prev_bytes += acct->bytes;
++	}
++	entry->hash = 0xffff;
++
++	return acct;
++}
++
+ static bool
+ mtk_flow_entry_update(struct mtk_ppe *ppe, struct mtk_flow_entry *entry,
+ 		      u64 *packets, u64 *bytes)
+@@ -667,12 +685,7 @@ mtk_flow_entry_update(struct mtk_ppe *pp
+ 
+ 	if (!mtk_flow_entry_match(ppe->eth, entry, &foe, len) ||
+ 	    FIELD_GET(MTK_FOE_IB1_STATE, foe.ib1) != MTK_FOE_STATE_BIND) {
+-		acct = mtk_ppe_acct_data(ppe, hash);
+-		if (acct) {
+-			entry->prev_packets += acct->packets;
+-			entry->prev_bytes += acct->bytes;
+-		}
+-
++		acct = mtk_flow_entry_detach(ppe, entry);
+ 		goto out;
+ 	}
+ 
+@@ -723,11 +736,11 @@ mtk_flow_entry_update_l2(struct mtk_ppe
+ void mtk_foe_entry_get_stats(struct mtk_ppe *ppe, struct mtk_flow_entry *entry,
+ 			     int *idle)
+ {
++	spin_lock_bh(&ppe_lock);
++
+ 	entry->packets = entry->prev_packets;
+ 	entry->bytes = entry->prev_bytes;
+ 
+-	spin_lock_bh(&ppe_lock);
+-
+ 	if (entry->type == MTK_FLOW_TYPE_L2)
+ 		mtk_flow_entry_update_l2(ppe, entry);
+ 	else
+@@ -873,12 +886,11 @@ void __mtk_ppe_check_skb(struct mtk_ppe
+ 	const struct mtk_soc_data *soc = ppe->eth->soc;
+ 	struct hlist_head *head = &ppe->foe_flow[hash / soc->hash_offset];
+ 	struct mtk_foe_entry *hwe = mtk_foe_get_entry(ppe, hash);
+-	struct mtk_flow_entry *entry;
++	struct mtk_flow_entry *entry, *bound = NULL;
+ 	struct mtk_foe_bridge key = {};
+ 	struct mtk_foe_entry foe = {};
+ 	struct hlist_node *n;
+ 	struct ethhdr *eh;
+-	bool found = false;
+ 	int entry_len;
+ 	u8 *tag;
+ 
+@@ -891,29 +903,36 @@ void __mtk_ppe_check_skb(struct mtk_ppe
+ 	memcpy(&foe, hwe, entry_len);
+ 
+ 	hlist_for_each_entry_safe(entry, n, head, list) {
+-		if (found ||
+-		    !mtk_flow_entry_match(ppe->eth, entry, &foe, entry_len)) {
+-			/* Detach only entries whose own slot no longer
+-			 * holds their flow; a still-bound neighbor in this
+-			 * bucket must be left alone or it can never
+-			 * re-bind. Entries naming this slot are always
+-			 * stale: if it got bound during the walk it
+-			 * belongs to a new sw owner.
+-			 */
+-			if (entry->hash != 0xffff &&
+-			    (entry->hash == hash ||
+-			     !mtk_flow_entry_still_bound(ppe, entry)))
+-				__mtk_foe_entry_clear(ppe, entry, false);
++		if (!bound &&
++		    mtk_flow_entry_match(ppe->eth, entry, &foe, entry_len)) {
++			if (entry->hash != 0xffff)
++				mtk_flow_entry_detach(ppe, entry);
++			bound = entry;
+ 			continue;
+ 		}
+ 
+-		entry->hash = hash;
+-		__mtk_foe_entry_commit(ppe, &entry->data, hash);
+-		found = true;
++		/* Detach only entries whose own slot no longer
++		 * holds their flow; a still-bound neighbor in this
++		 * bucket must be left alone or it can never
++		 * re-bind. Entries naming this slot are always
++		 * stale.
++		 */
++		if (entry->hash != 0xffff &&
++		    (entry->hash == hash ||
++		     !mtk_flow_entry_still_bound(ppe, entry))) {
++			mtk_flow_entry_detach(ppe, entry);
++			__mtk_foe_entry_clear(ppe, entry, false);
++		}
+ 	}
+ 
+-	if (found)
++	/* The commit restarts the count of the slot, so every entry that
++	 * named the slot must take its count first.
++	 */
++	if (bound) {
++		bound->hash = hash;
++		__mtk_foe_entry_commit(ppe, &bound->data, hash);
+ 		goto out;
++	}
+ 
+ 	eh = eth_hdr(skb);
+ 	ether_addr_copy(key.dest_mac, eh->h_dest);
