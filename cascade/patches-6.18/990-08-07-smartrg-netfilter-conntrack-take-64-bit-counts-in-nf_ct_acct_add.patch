@@ -1,0 +1,42 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Thu, 24 Sep 2026 13:01:57 -0700
+Subject: [PATCH] netfilter: conntrack: take 64-bit counts in nf_ct_acct_add
+
+The flowtable adds the hardware counts of one stats poll to conntrack
+in one call, and that call took 32-bit packet and byte counts. A poll
+interval that carries 4 GiB or more lost a multiple of 4 GiB.
+
+Conntrack now gets the whole delta of a poll, whatever its size. A
+fast flow reaches that size in one interval, and a longer flow
+timeout makes the interval longer.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ include/net/netfilter/nf_conntrack_acct.h |    3 +--
+ net/netfilter/nf_conntrack_core.c         |    3 +--
+ 2 files changed, 2 insertions(+), 4 deletions(-)
+
+--- a/include/net/netfilter/nf_conntrack_acct.h
++++ b/include/net/netfilter/nf_conntrack_acct.h
+@@ -65,8 +65,7 @@ static inline void nf_ct_set_acct(struct
+ #endif
+ }
+ 
+-void nf_ct_acct_add(struct nf_conn *ct, u32 dir, unsigned int packets,
+-		    unsigned int bytes);
++void nf_ct_acct_add(struct nf_conn *ct, u32 dir, u64 packets, u64 bytes);
+ 
+ static inline void nf_ct_acct_update(struct nf_conn *ct, u32 dir,
+ 				     unsigned int bytes)
+--- a/net/netfilter/nf_conntrack_core.c
++++ b/net/netfilter/nf_conntrack_core.c
+@@ -917,8 +917,7 @@ out:
+ }
+ EXPORT_SYMBOL_GPL(nf_conntrack_hash_check_insert);
+ 
+-void nf_ct_acct_add(struct nf_conn *ct, u32 dir, unsigned int packets,
+-		    unsigned int bytes)
++void nf_ct_acct_add(struct nf_conn *ct, u32 dir, u64 packets, u64 bytes)
+ {
+ 	struct nf_conn_acct *acct;
+ 
