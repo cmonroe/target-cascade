@@ -1,0 +1,29 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Thu, 24 Sep 2026 21:40:05 -0700
+Subject: [PATCH] net: ethernet: mtk_ppe: clear only the expired L2 subflow
+
+When one subflow of a bridged flow expires (its slot leaves BIND),
+the stats update clears the whole L2 flow instead of that subflow.
+The clear frees every subflow while the loop still holds the next
+one, and it takes the L2 flow out of the table that new subflows
+attach to.
+
+Only the expired subflow goes away now. The L2 flow keeps its other
+subflows and can take new ones.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/mediatek/mtk_ppe.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/mediatek/mtk_ppe.c
++++ b/drivers/net/ethernet/mediatek/mtk_ppe.c
+@@ -719,7 +719,7 @@ mtk_flow_entry_update_l2(struct mtk_ppe
+ 		if (!mtk_flow_entry_update(ppe, cur, packets, bytes)) {
+ 			entry->prev_packets += cur->prev_packets;
+ 			entry->prev_bytes += cur->prev_bytes;
+-			__mtk_foe_entry_clear(ppe, entry, false);
++			__mtk_foe_entry_clear(ppe, cur, false);
+ 			continue;
+ 		}
+ 
