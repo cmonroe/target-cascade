@@ -32,7 +32,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	if (mtk_is_netsys_v2_or_greater(eth))
 --- a/drivers/net/ethernet/mediatek/mtk_ppe.c
 +++ b/drivers/net/ethernet/mediatek/mtk_ppe.c
-@@ -748,7 +748,12 @@ __mtk_foe_entry_commit(struct mtk_ppe *p
+@@ -761,7 +761,12 @@ __mtk_foe_entry_commit(struct mtk_ppe *p
  	struct mtk_foe_entry *hwe;
  	u32 val;
  
@@ -45,7 +45,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  		entry->ib1 &= ~MTK_FOE_IB1_BIND_TIMESTAMP_V2;
  		entry->ib1 |= FIELD_PREP(MTK_FOE_IB1_BIND_TIMESTAMP_V2,
  					 timestamp);
-@@ -758,7 +763,6 @@ __mtk_foe_entry_commit(struct mtk_ppe *p
+@@ -771,7 +776,6 @@ __mtk_foe_entry_commit(struct mtk_ppe *p
  					 timestamp);
  	}
  

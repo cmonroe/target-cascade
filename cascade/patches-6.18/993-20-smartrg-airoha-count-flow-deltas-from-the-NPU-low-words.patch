@@ -37,7 +37,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	enum magic e_magic; /* egress interface */
 --- a/drivers/net/ethernet/airoha/airoha_ppe.c
 +++ b/drivers/net/ethernet/airoha/airoha_ppe.c
-@@ -670,8 +670,108 @@ static void airoha_ppe_foe_flow_stats_re
+@@ -656,8 +656,108 @@ static void airoha_ppe_foe_flow_stats_re
  		airoha_ppe_foe_flow_stat_entry_reset(ppe, npu, i);
  }
  
@@ -147,7 +147,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  					     struct airoha_foe_entry *hwe,
  					     u32 hash)
  {
-@@ -709,8 +809,6 @@ static void airoha_ppe_foe_flow_stats_up
+@@ -695,8 +795,6 @@ static void airoha_ppe_foe_flow_stats_up
  	if (pse_port == FE_PSE_PORT_CDM4)
  		return;
  
@@ -156,7 +156,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	val = FIELD_GET(AIROHA_FOE_CHANNEL | AIROHA_FOE_QID, *data);
  	*data = (*data & ~AIROHA_FOE_ACTDP) |
  		FIELD_PREP(AIROHA_FOE_ACTDP, val);
-@@ -841,7 +939,7 @@ int airoha_ppe_foe_commit_entry(struct a
+@@ -827,7 +925,7 @@ int airoha_ppe_foe_commit_entry(struct a
  	}
  
  	if (!rx_wlan)
@@ -165,7 +165,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	if (hash < sram_num_entries)
  		err = airoha_ppe_foe_commit_sram_entry(ppe, hash);
-@@ -1009,6 +1107,7 @@ static void airoha_ppe_foe_insert_entry(
+@@ -995,6 +1093,7 @@ static void airoha_ppe_foe_insert_entry(
  		    ppe->eth->extra_ops.tx_modified(e, hash))
  			goto unlock;
  
@@ -173,7 +173,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		airoha_ppe_foe_commit_entry(ppe, &e->data, hash, rx_wlan);
  		commit_done = true;
  		e->hash = hash;
-@@ -1144,7 +1243,7 @@ static void airoha_ppe_foe_flow_entry_up
+@@ -1130,7 +1229,7 @@ static void airoha_ppe_foe_flow_entry_up
  
  	memcpy(&hwe, hwe_p, sizeof(*hwe_p));
  	if (!airoha_ppe_foe_compare_entry(e, &hwe)) {
@@ -182,7 +182,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		goto unlock;
  	}
  
-@@ -1444,15 +1543,36 @@ static int airoha_ppe_flow_offload_stats
+@@ -1430,15 +1529,36 @@ static int airoha_ppe_flow_offload_stats
  	idle = airoha_ppe_entry_idle_time(eth->ppe, e);
  	f->stats.lastused = jiffies - idle * HZ;
  

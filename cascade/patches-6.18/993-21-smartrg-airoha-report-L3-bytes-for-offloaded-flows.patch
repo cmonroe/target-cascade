@@ -29,7 +29,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	enum magic e_magic; /* egress interface */
 --- a/drivers/net/ethernet/airoha/airoha_ppe.c
 +++ b/drivers/net/ethernet/airoha/airoha_ppe.c
-@@ -12,6 +12,7 @@
+@@ -11,6 +11,7 @@
  #include <linux/rhashtable.h>
  #include <net/ipv6.h>
  #include <linux/if_vlan.h>
@@ -37,7 +37,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  #include <net/pkt_cls.h>
  #include <net/route.h>
  
-@@ -771,6 +772,20 @@ static void airoha_ppe_foe_flow_stats_cl
+@@ -757,6 +758,20 @@ static void airoha_ppe_foe_flow_stats_cl
  		e->stats_base = (struct airoha_foe_stats){};
  }
  
@@ -58,7 +58,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static void airoha_ppe_foe_flow_stats_update(struct airoha_ppe *ppe,
  					     struct airoha_foe_entry *hwe,
  					     u32 hash)
-@@ -1108,6 +1123,7 @@ static void airoha_ppe_foe_insert_entry(
+@@ -1094,6 +1109,7 @@ static void airoha_ppe_foe_insert_entry(
  			goto unlock;
  
  		airoha_ppe_foe_flow_stats_claim(ppe, e, hash, index);
@@ -66,7 +66,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		airoha_ppe_foe_commit_entry(ppe, &e->data, hash, rx_wlan);
  		commit_done = true;
  		e->hash = hash;
-@@ -1563,12 +1579,16 @@ static int airoha_ppe_flow_offload_stats
+@@ -1549,12 +1565,16 @@ static int airoha_ppe_flow_offload_stats
  		eth->extra_ops.conntrack_get_cnt(e->hash, &vendor);
  	}
  

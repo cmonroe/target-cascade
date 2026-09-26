@@ -16,7 +16,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 
 --- a/drivers/net/ethernet/mediatek/mtk_ppe.c
 +++ b/drivers/net/ethernet/mediatek/mtk_ppe.c
-@@ -1169,12 +1169,12 @@ void mtk_ppe_start(struct mtk_ppe *ppe)
+@@ -1188,12 +1188,12 @@ void mtk_ppe_start(struct mtk_ppe *ppe)
  	      FIELD_PREP(MTK_PPE_UNBIND_AGE_DELTA, 3);
  	ppe_w32(ppe, MTK_PPE_UNBIND_AGE, val);
  

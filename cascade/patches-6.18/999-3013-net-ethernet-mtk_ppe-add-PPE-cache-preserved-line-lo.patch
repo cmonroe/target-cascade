@@ -211,7 +211,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	}
  	entry->hash = 0xffff;
  
-@@ -779,8 +930,6 @@ __mtk_foe_entry_commit(struct mtk_ppe *p
+@@ -792,8 +943,6 @@ __mtk_foe_entry_commit(struct mtk_ppe *p
  		acct->packets = 0;
  		acct->bytes = 0;
  	}
@@ -220,7 +220,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  }
  
  void mtk_foe_entry_clear(struct mtk_ppe *ppe, struct mtk_flow_entry *entry)
-@@ -1040,6 +1189,8 @@ struct mtk_ppe *mtk_ppe_init(struct mtk_
+@@ -1059,6 +1208,8 @@ struct mtk_ppe *mtk_ppe_init(struct mtk_
  		ppe->acct_table = acct;
  	}
  
@@ -229,7 +229,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	return ppe;
  
  err_free_l2_flows:
-@@ -1143,8 +1294,6 @@ void mtk_ppe_start(struct mtk_ppe *ppe)
+@@ -1162,8 +1313,6 @@ void mtk_ppe_start(struct mtk_ppe *ppe)
  	ppe_w32(ppe, MTK_PPE_IP_PROTO_CHK,
  		MTK_PPE_IP_PROTO_CHK_IPV4 | MTK_PPE_IP_PROTO_CHK_IPV6);
  
@@ -238,7 +238,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	val = MTK_PPE_FLOW_CFG_IP6_3T_ROUTE |
  	      MTK_PPE_FLOW_CFG_IP6_5T_ROUTE |
  	      MTK_PPE_FLOW_CFG_IP6_6RD |
-@@ -1196,6 +1345,8 @@ void mtk_ppe_start(struct mtk_ppe *ppe)
+@@ -1215,6 +1364,8 @@ void mtk_ppe_start(struct mtk_ppe *ppe)
  	}
  	ppe_w32(ppe, MTK_PPE_GLO_CFG, val);
  
@@ -249,7 +249,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	if (mtk_is_netsys_v2_or_greater(ppe->eth)) {
 --- a/drivers/net/ethernet/mediatek/mtk_ppe.h
 +++ b/drivers/net/ethernet/mediatek/mtk_ppe.h
-@@ -348,6 +348,8 @@ struct mtk_ppe {
+@@ -349,6 +349,8 @@ struct mtk_ppe {
  	struct rhashtable l2_flows;
  
  	void *acct_table;
@@ -258,7 +258,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  };
  
  struct mtk_ppe *mtk_ppe_init(struct mtk_eth *eth, void __iomem *base, int index);
-@@ -360,7 +362,6 @@ int mtk_ppe_prepare_reset(struct mtk_ppe
+@@ -361,7 +363,6 @@ int mtk_ppe_prepare_reset(struct mtk_ppe
  struct mtk_foe_accounting *mtk_ppe_mib_entry_read(struct mtk_ppe *ppe, u16 index);
  
  void __mtk_ppe_check_skb(struct mtk_ppe *ppe, struct sk_buff *skb, u16 hash);

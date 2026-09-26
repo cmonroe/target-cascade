@@ -37,7 +37,7 @@ Signed-off-by: Paolo Abeni <pabeni@redhat.com>
 +++ b/drivers/net/dsa/mt7530.c
 @@ -2571,6 +2571,7 @@ mt7530_setup(struct dsa_switch *ds)
  	}
-
+ 
  	ds->assisted_learning_on_cpu_port = true;
 +	ds->untag_vlan_aware_bridge_pvid = true;
  	ds->mtu_enforcement_ingress = true;
@@ -45,7 +45,7 @@ Signed-off-by: Paolo Abeni <pabeni@redhat.com>
  	ds->ageing_time_max = (AGE_CNT_MAX + 1) * (AGE_UNIT_MAX + 1) * 1000;
 @@ -2762,6 +2763,7 @@ mt7531_setup_common(struct dsa_switch *d
  	int ret, i;
-
+ 
  	ds->assisted_learning_on_cpu_port = true;
 +	ds->untag_vlan_aware_bridge_pvid = true;
  	ds->mtu_enforcement_ingress = true;
