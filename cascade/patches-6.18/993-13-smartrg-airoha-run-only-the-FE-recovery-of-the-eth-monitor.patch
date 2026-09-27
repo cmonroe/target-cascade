@@ -41,7 +41,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
 --- a/drivers/net/ethernet/airoha/arht_dp_api.c
 +++ b/drivers/net/ethernet/airoha/arht_dp_api.c
-@@ -3238,19 +3238,65 @@ static void airoha_eth_monitor_serdes_pr
+@@ -3235,19 +3235,65 @@ static void airoha_eth_monitor_serdes_pr
  	rtnl_unlock();
  }
  
@@ -114,7 +114,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		}
  	}
  	//fe_oq_stat_monitor();
-@@ -3295,6 +3341,8 @@ void airoha_eth_monitor_workqueue_init(v
+@@ -3292,6 +3338,8 @@ void airoha_eth_monitor_workqueue_init(v
  		if(!eth->work_started)
  		{
  			eth->work_started = true;

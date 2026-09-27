@@ -236,7 +236,7 @@
  	}
  	else if ( type >= PPE_PKT_TYPE_IPV6_ROUTE_3T )
  	{
-@@ -1835,7 +1835,7 @@ static void arht_multicast_hwnat_state_h
+@@ -1832,7 +1832,7 @@ static void arht_multicast_hwnat_state_h
  		case PPE_PKT_TYPE_BRIDGE:
  			hwe->bridge.data = data;
  			hwe->bridge.ib2 = val;

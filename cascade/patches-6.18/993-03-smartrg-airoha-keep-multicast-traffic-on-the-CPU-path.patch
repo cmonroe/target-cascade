@@ -10,12 +10,13 @@ Signed-off-by: rakesh chanda <rakesh.chanda@adtran.com>
 
 --- a/drivers/net/ethernet/airoha/arht_dp_api.c
 +++ b/drivers/net/ethernet/airoha/arht_dp_api.c
-@@ -1371,7 +1371,7 @@ static void airoha_get_entry_bind(u32 ms
+@@ -1370,9 +1370,6 @@ static void airoha_get_entry_bind(u32 ms
+ 				flow_e->ingress_dev_idx = ETH2;
  		}
  		airoha_ppe_check_skb(&eth->ppe->dev, q->skb, hash, reason, false);
- 		if(arht_xpon_igmp_sfu_enable_hook == NULL){
+-		if(arht_xpon_igmp_sfu_enable_hook == NULL){
 -			arht_ppe_multicast_handler(eth->ppe, q->skb);
-+			//arht_ppe_multicast_handler(eth->ppe, q->skb);
- 		}
+-		}
  
  	} else {
+ 		if (!eth->npu) {			
