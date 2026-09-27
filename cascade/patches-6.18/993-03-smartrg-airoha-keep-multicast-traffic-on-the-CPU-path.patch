@@ -1,8 +1,9 @@
 From: rakesh chanda <rakesh.chanda@adtran.com>
 Date: Tue, 25 Aug 2026 13:19:37 +0000
-Subject: [PATCH] SDG-8679 Disable hardware acceleration for multicast traffic
+Subject: [PATCH] net: airoha: keep multicast traffic on the CPU path
 
-Commenting multicast handler to avoid invoking multicast hwnat hook so that multicast traffic is processed by CPU.
+The receive path no longer calls the multicast handler, so the CPU
+forwards multicast traffic. The SFU path keeps its call.
 
 Signed-off-by: rakesh chanda <rakesh.chanda@adtran.com>
 ---

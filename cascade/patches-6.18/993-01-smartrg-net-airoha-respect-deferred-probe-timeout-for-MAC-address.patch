@@ -8,7 +8,10 @@ set_mac_addr hook or a random MAC. This allows recovery/initramfs
 environments to proceed when nvmem providers are unavailable while
 still waiting for deferred probes during normal boot.
 
-Ported from the target-mediatek 990-32 patch of the same name.
+The MediaTek ethernet driver in this tree carries the same rule.
+
+Signed-off-by: Scott Iveland <scott.iveland@adtran.com>
+---
 
 --- a/drivers/net/ethernet/airoha/airoha_eth.c
 +++ b/drivers/net/ethernet/airoha/airoha_eth.c

@@ -1,15 +1,13 @@
 From: Hoang Viet Pham <hoang.pham@adtran.com>
 Date: Wed, 01 Apr 2026 08:14:03 -0500
-Subject: [PATCH] airoha: allow PPE offload setup from datapath API module
+Subject: [PATCH] net: airoha: allow PPE offload setup from datapath API module
 
-Export airoha_ppe_offload_setup() and add airoha_set_ppe_init_hook so
-external modules can trigger PPE offload re-initialization after load.
+The vendor datapath runs the PPE offload setup from its SFU work
+item, without a flowtable rule. The setup function was static to the
+PPE code, and the datapath can be a separate module.
 
 Signed-off-by: Hoang Viet Pham <hoang.pham@adtran.com>
 ---
- drivers/net/ethernet/airoha/airoha_ppe.c  |    2 +-
- drivers/net/ethernet/airoha/arht_dp_api.c |   16 ++++++++++++++++
- 2 files changed, 17 insertions(+), 1 deletion(-)
 
 --- a/drivers/net/ethernet/airoha/airoha_ppe.c
 +++ b/drivers/net/ethernet/airoha/airoha_ppe.c

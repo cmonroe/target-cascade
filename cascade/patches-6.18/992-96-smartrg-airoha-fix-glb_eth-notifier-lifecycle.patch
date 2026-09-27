@@ -18,8 +18,6 @@ airoha_hw_cleanup(), publish eth->ppe only after ppe init fully succeeds
 and clear it on deinit, and make the exported setter bail when the
 device is not initialized.
 
-Fixes: OWRT-5260
-
 Signed-off-by: Chad Monroe <chad@monroe.io>
 ---
  drivers/net/ethernet/airoha/airoha_eth.c       |    4 +++
