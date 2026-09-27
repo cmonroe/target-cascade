@@ -7,6 +7,7 @@
 #include "airoha_eth.h"
 #include "airoha_regs.h"
 #include "airoha_function.h"
+#include "arht_fe.h"
 
 
 
@@ -17,8 +18,14 @@
 #define CHANNEL_RETIRE 1
 #define CHANNEL_DROP 0
 
-spinlock_t fe_pse_reset_lock;
+DEFINE_SPINLOCK(fe_pse_reset_lock);
 atomic_t qdma_stop_flag = ATOMIC_INIT(0);
+/* Counts how many times airoha_fe_do_core_reset() has been invoked.
+ * Readable via debugfs dp_api/fe_hc for RD diagnostics.
+ * Use atomic_t to avoid data races between the workqueue writer
+ * and the debugfs reader running on different CPUs.
+ */
+atomic_t fe_core_reset_count = ATOMIC_INIT(0);
 int channel_retire = CHANNEL_RETIRE;
 
 /* FE */
@@ -2335,24 +2342,107 @@ void airoha_fe_core_reset(struct airoha_eth *eth)
 	return;
 }
 
+#define PPE_TB_CFG_KA_AGE_MASK	\
+	(PPE_TB_CFG_KEEPALIVE_MASK |	\
+	 PPE_TB_CFG_AGE_TCP_FIN_MASK |	\
+	 PPE_TB_CFG_AGE_UDP_MASK |	\
+	 PPE_TB_CFG_AGE_TCP_MASK |	\
+	 PPE_TB_CFG_AGE_UNBIND_MASK |	\
+	 PPE_TB_CFG_AGE_NON_L4_MASK |	\
+	 PPE_TB_CFG_AGE_PREBIND_MASK)
+static const int fe_core_reset_gdm_ids[] = { 1, 2, 3, 4 };
+void airoha_fe_do_core_reset(struct airoha_eth *eth)
+{
+	u32 gdm_txchn[ARRAY_SIZE(fe_core_reset_gdm_ids)];
+	u32 gdm_rxchn[ARRAY_SIZE(fe_core_reset_gdm_ids)];
+	u32 ppe_tb_cfg[AIROHA_MAX_NUM_PPE];
+	u32 qdma_glo_cfg[AIROHA_MAX_NUM_QDMA];
+	u32 tdma_glo_cfg;
+	u32 pse_iq_s1 = 0, pse_iq_s2 = 0;
+	unsigned long flags;
+	int i, check_times;
+	int num_ppe;
+	if (!eth || !eth->fe_regs || !eth->soc)
+		return;
+	atomic_inc(&fe_core_reset_count);
+	num_ppe = eth->soc->num_ppe;
+	if (num_ppe > AIROHA_MAX_NUM_PPE)
+		num_ppe = AIROHA_MAX_NUM_PPE;
+	spin_lock_irqsave(&fe_pse_reset_lock, flags);
+	atomic_set(&qdma_stop_flag, 1);
+	for (i = 0; i < AIROHA_MAX_NUM_QDMA; i++) {
+		qdma_glo_cfg[i] = airoha_qdma_rr(&eth->qdma[i], REG_QDMA_GLOBAL_CFG);
+		airoha_qdma_clear(&eth->qdma[i], REG_QDMA_GLOBAL_CFG,
+				  GLOBAL_CFG_TX_DMA_EN_MASK);
+	}
+	tdma_glo_cfg = airoha_fe_rr(eth, REG_TDMA_GLO_CFG);
+	airoha_fe_clear(eth, REG_TDMA_GLO_CFG, TDMA_GLO_CFG_TX_DMA_EN_MASK);
+	for (i = 0; i < ARRAY_SIZE(fe_core_reset_gdm_ids); i++) {
+		int gdm = fe_core_reset_gdm_ids[i];
+		gdm_txchn[i] = airoha_fe_rr(eth, REG_GDM_TXCHN_EN(gdm));
+		gdm_rxchn[i] = airoha_fe_rr(eth, REG_GDM_RXCHN_EN(gdm));
+		airoha_fe_wr(eth, REG_GDM_TXCHN_EN(gdm), 0);
+		airoha_fe_wr(eth, REG_GDM_RXCHN_EN(gdm), 0);
+	}
+	for (i = 0; i < num_ppe; i++) {
+		ppe_tb_cfg[i] = airoha_fe_rr(eth, REG_PPE_TB_CFG(i));
+		airoha_fe_clear(eth, REG_PPE_TB_CFG(i), PPE_TB_CFG_KA_AGE_MASK);
+	}
+	spin_unlock_irqrestore(&fe_pse_reset_lock, flags);
+	for (check_times = 0; check_times < 5; check_times++) {
+		mdelay(1);
+		pse_iq_s1 = airoha_fe_rr(eth, PSE_IQ_STA1);
+		pse_iq_s2 = airoha_fe_rr(eth, PSE_IQ_STA2);
+		if (pse_iq_s1 == 0 && pse_iq_s2 == 0)
+			break;
+	}
+	if (check_times >= 5)
+		pr_warn("[airoha_eth] FE core reset while PSE IQ not empty (s1=0x%08x s2=0x%08x)\n",
+			pse_iq_s1, pse_iq_s2);
+	spin_lock_irqsave(&fe_pse_reset_lock, flags);
+	for (i = 0; i < AIROHA_MAX_NUM_QDMA; i++)
+		airoha_qdma_clear(&eth->qdma[i], REG_QDMA_GLOBAL_CFG,
+				  GLOBAL_CFG_RX_DMA_EN_MASK);
+	airoha_fe_clear(eth, REG_TDMA_GLO_CFG, TDMA_GLO_CFG_RX_DMA_EN_MASK);
+	spin_unlock_irqrestore(&fe_pse_reset_lock, flags);
+	mdelay(1);
+	airoha_fe_set(eth, REG_FE_RST_GLO_CFG, FE_RST_CORE_MASK);
+	mdelay(1);
+	spin_lock_irqsave(&fe_pse_reset_lock, flags);
+	for (i = 0; i < AIROHA_MAX_NUM_QDMA; i++)
+		airoha_qdma_rmw(&eth->qdma[i], REG_QDMA_GLOBAL_CFG,
+				GLOBAL_CFG_TX_DMA_EN_MASK | GLOBAL_CFG_RX_DMA_EN_MASK,
+				qdma_glo_cfg[i] & (GLOBAL_CFG_TX_DMA_EN_MASK |
+						   GLOBAL_CFG_RX_DMA_EN_MASK));
+	airoha_fe_rmw(eth, REG_TDMA_GLO_CFG,
+		      TDMA_GLO_CFG_TX_DMA_EN_MASK | TDMA_GLO_CFG_RX_DMA_EN_MASK,
+		      tdma_glo_cfg & (TDMA_GLO_CFG_TX_DMA_EN_MASK |
+				      TDMA_GLO_CFG_RX_DMA_EN_MASK));
+	for (i = 0; i < ARRAY_SIZE(fe_core_reset_gdm_ids); i++) {
+		int gdm = fe_core_reset_gdm_ids[i];
+		airoha_fe_wr(eth, REG_GDM_TXCHN_EN(gdm), gdm_txchn[i]);
+		airoha_fe_wr(eth, REG_GDM_RXCHN_EN(gdm), gdm_rxchn[i]);
+	}
+	for (i = 0; i < num_ppe; i++)
+		airoha_fe_rmw(eth, REG_PPE_TB_CFG(i), PPE_TB_CFG_KA_AGE_MASK,
+			      ppe_tb_cfg[i] & PPE_TB_CFG_KA_AGE_MASK);
+	atomic_set(&qdma_stop_flag, 0);
+	spin_unlock_irqrestore(&fe_pse_reset_lock, flags);
+	pr_info("[airoha_eth] FE core reset done\n");
+}
 
 void airoha_fe_pse_oq_set_fc_disable(struct airoha_eth *eth, u32 port, u32 queue)
 {
 #ifdef CONFIG_NET_AIROHA_FLOW_STATS
-	airoha_fe_wr(eth, REG_FE_PSE_QUEUE_CFG_WR, 
-			FIELD_PREP(PSE_CFG_PORT_ID_MASK, port) |
-			FIELD_PREP(PSE_CFG_QUEUE_ID_MASK, queue));
 	airoha_fe_rmw(eth, REG_FE_PSE_QUEUE_CFG_VAL, 
-			PSE_CFG_OQ_FC_ON |
-			PSE_CFG_OQ_RSV_MASK,
-			FIELD_PREP(PSE_CFG_OQ_FC_ON, 0) |
-			FIELD_PREP(PSE_CFG_OQ_RSV_MASK, 0x20));
-	airoha_fe_wr(eth, REG_FE_PSE_QUEUE_CFG_WR,
+			PSE_CFG_OQ_FC_ON,
+			FIELD_PREP(PSE_CFG_OQ_FC_ON, 0));
+	airoha_fe_rmw(eth, REG_FE_PSE_QUEUE_CFG_WR,
+			PSE_CFG_PORT_ID_MASK | PSE_CFG_QUEUE_ID_MASK |
+		    PSE_CFG_WR_EN_MASK | PSE_CFG_OQFCEN_SEL,
 			FIELD_PREP(PSE_CFG_PORT_ID_MASK, port) |
 			FIELD_PREP(PSE_CFG_QUEUE_ID_MASK, queue) |
-			PSE_CFG_WR_EN_MASK |
-			PSE_CFG_OQFCEN_SEL |
-			PSE_CFG_OQRSV_SEL_MASK);
+			PSE_CFG_WR_EN_MASK | PSE_CFG_OQFCEN_SEL);
 #endif
 
 	return;

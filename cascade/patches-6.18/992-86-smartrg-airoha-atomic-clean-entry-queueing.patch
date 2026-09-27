@@ -15,7 +15,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 ---
 --- a/drivers/net/ethernet/airoha/arht_ppe.c
 +++ b/drivers/net/ethernet/airoha/arht_ppe.c
-@@ -3018,7 +3018,12 @@ static int queue_clean_entry_work(enum c
+@@ -3154,7 +3154,12 @@ static int queue_clean_entry_work(enum c
  {
      struct clean_entry_work *cew;
  
@@ -29,7 +29,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
      if (!cew)
          return -ENOMEM;
  
-@@ -3026,7 +3031,7 @@ static int queue_clean_entry_work(enum c
+@@ -3162,7 +3167,7 @@ static int queue_clean_entry_work(enum c
      cew->type = type;
  
      if (data_len > 0) {

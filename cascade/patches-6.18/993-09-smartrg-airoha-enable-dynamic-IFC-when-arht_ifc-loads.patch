@@ -38,7 +38,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/airoha/arht_dynamic_ifc.c
 +++ b/drivers/net/ethernet/airoha/arht_dynamic_ifc.c
-@@ -984,6 +984,84 @@ static int dynamic_ifc_proc_open(struct
+@@ -983,6 +983,84 @@ static int dynamic_ifc_proc_open(struct
  	return single_open(file, dynamic_ifc_seq_show, NULL);
  }
  
@@ -123,7 +123,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static ssize_t dynamic_ifc_write_proc(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
  {
  	char str[64] = {0};
-@@ -1008,43 +1086,11 @@ static ssize_t dynamic_ifc_write_proc(st
+@@ -1007,43 +1085,11 @@ static ssize_t dynamic_ifc_write_proc(st
  
  	if (!strcmp(cmd, "enable")) 
  	{
@@ -171,7 +171,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	} else if (!strcmp(cmd, "debug")) {
  		if (sscanf(str, "%31s %d", cmd, &val) == 2) {
  			if (val) {
-@@ -1121,12 +1167,17 @@ static int __init arht_dynamic_ifc_init(
+@@ -1120,12 +1166,17 @@ static int __init arht_dynamic_ifc_init(
  
  	dynamic_ifc_app_list_add("iperf3");
  	dynamic_ifc_app_list_add("ookla");

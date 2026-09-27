@@ -36,7 +36,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  #if __has_include("airoha_function.h") && __has_include("arht_dynamic_ifc.h") && __has_include("arht_kprobe.h")
  #define ARHT_DIFC_FULL_SUPPORT 1
-@@ -1095,6 +1096,9 @@ static int __init arht_dynamic_ifc_init(
+@@ -1101,6 +1102,9 @@ static int __init arht_dynamic_ifc_init(
  {
  	int i;
  
@@ -56,7 +56,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  #include <linux/netdevice.h>
  #include <linux/etherdevice.h>
  #include <linux/ip.h>
-@@ -1209,6 +1210,9 @@ static int __init wifi_lo_init(void)
+@@ -1221,6 +1222,9 @@ static int __init wifi_lo_init(void)
  {
  	int ret;
  

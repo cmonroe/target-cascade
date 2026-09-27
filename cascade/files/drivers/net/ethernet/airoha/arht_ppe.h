@@ -82,7 +82,9 @@ struct FoeEntryExt
 #define MAX_VLAN_DEPTH      5
 
 #define BITMAP_IDX_SIZE ((16384+31)/32) /*default use sram*/
-
+#ifndef IFF_PON_DEV
+#define IFF_PON_DEV (1UL << 31)
+#endif
 struct hwnat_shrink_field {
 	//unsigned int smac[UPDMEM_SMAC_LINE];		// 0:smac[31~0]; 1:smac[48~32];
 	unsigned char smac[UPDMEM_SMAC_CNT];		// 0:smac[31~0]; 1:smac[48~32];
@@ -109,8 +111,7 @@ inline static int airoha_ppe_is_pon_dev(struct net_device *dev)
 		return 0;
 	if (is_vlan_dev(dev))
 		real_dev = vlan_dev_real_dev(dev);
-	return ((real_dev != NULL) && ((real_dev->name[0] == 'p') && \
-		(real_dev->name[1] == 'o') && (real_dev->name[2] == 'n')));
+	return ((real_dev != NULL) && (real_dev->priv_flags & IFF_PON_DEV));
 }
 
 inline static int airoha_ppe_is_ppp_dev(struct net_device *dev)

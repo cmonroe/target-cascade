@@ -213,7 +213,7 @@
  			*((__be16 *)&h_dest[4]) = cpu_to_be16(l2->dest_mac_lo);
 --- a/drivers/net/ethernet/airoha/arht_dp_api.c
 +++ b/drivers/net/ethernet/airoha/arht_dp_api.c
-@@ -838,14 +838,14 @@ void airoha_set_default_acnt_meter_idx(s
+@@ -841,14 +841,14 @@ void airoha_set_default_acnt_meter_idx(s
  
  	if ( type == PPE_PKT_TYPE_BRIDGE ) 
  	{
@@ -236,7 +236,7 @@
  	}
  	else if ( type >= PPE_PKT_TYPE_IPV6_ROUTE_3T )
  	{
-@@ -1817,7 +1817,7 @@ static void arht_multicast_hwnat_state_h
+@@ -1835,7 +1835,7 @@ static void arht_multicast_hwnat_state_h
  		case PPE_PKT_TYPE_BRIDGE:
  			hwe->bridge.data = data;
  			hwe->bridge.ib2 = val;
@@ -388,7 +388,7 @@
  		}else {
  			*((__be32 *)h_dest) = cpu_to_be32(l2->dest_mac_hi);
  			*((__be16 *)&h_dest[4]) = cpu_to_be16(l2->dest_mac_lo);
-@@ -2556,16 +2556,16 @@ static int airoha_ppe_set_multicast_vlan
+@@ -2557,16 +2557,16 @@ static int airoha_ppe_set_multicast_vlan
          return -1;
      }
  
@@ -413,7 +413,7 @@
  
  	l2->etype &= ~(0x3 << 8);
  	l2->etype |= (0x3 & vpm) << 8;
-@@ -2620,8 +2620,8 @@ static int airoha_ppe_is_multicast_entry
+@@ -2621,8 +2621,8 @@ static int airoha_ppe_is_multicast_entry
  	}
  	else if (ptype == PPE_PKT_TYPE_BRIDGE)
  	{
@@ -424,7 +424,7 @@
  
  		if(h_dest[0] == 0x01 && h_dest[1] == 0x00 && h_dest[2] == 0x5E) {
  			return 1;
-@@ -2672,11 +2672,11 @@ static int airoha_ppe_set_special_tag(in
+@@ -2673,11 +2673,11 @@ static int airoha_ppe_set_special_tag(in
  	}
  
  	ptype = FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, foe_entry->ib1);
@@ -441,7 +441,7 @@
  		l2 = &foe_entry->dslite.l2.common;
  	} else {
          l2 = &foe_entry->ipv4.l2.common;
-@@ -2913,7 +2913,7 @@ void airoha_ppe_foe_flow_update_pon_offl
+@@ -2924,7 +2924,7 @@ void airoha_ppe_foe_flow_update_pon_offl
  				
  				case PPE_PKT_TYPE_BRIDGE:
  					e->data.bridge.data = data;
@@ -450,7 +450,7 @@
  					e->data.bridge.ib2 &= ~AIROHA_FOE_IB2_NBQ;
  					e->data.bridge.ib2 |= FIELD_PREP(AIROHA_FOE_IB2_NBQ, pinfo->channel);	
  					break;
-@@ -3373,7 +3373,7 @@ void airoha_ppe_foe_flow_update_wifi_npu
+@@ -3386,7 +3386,7 @@ void airoha_ppe_foe_flow_update_wifi_npu
  					
  					case PPE_PKT_TYPE_BRIDGE:
  						e->data.bridge.data = data;
@@ -459,7 +459,7 @@
  						e->data.bridge.ib2 &= ~AIROHA_FOE_IB2_PSE_QOS;
  						e->data.bridge.ib2 &= ~AIROHA_FOE_IB2_NBQ;
  						e->data.bridge.ib2 |= FIELD_PREP(AIROHA_FOE_IB2_NBQ, pinfo->nbq);
-@@ -3417,7 +3417,7 @@ void airoha_ppe_foe_flow_update_wifi_npu
+@@ -3430,7 +3430,7 @@ void airoha_ppe_foe_flow_update_wifi_npu
  					struct airoha_foe_mac_info_common *l2;
  	
  					if (pkt_type == PPE_PKT_TYPE_BRIDGE)

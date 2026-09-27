@@ -131,7 +131,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  			timer_setup(&lo->age_timer, dynamic_ifc_timeout, 0);
  			mod_timer(&lo->age_timer, jiffies + EXPIRE_TIME);
  			smp_wmb();
-@@ -934,7 +869,6 @@ static void dynamic_ifc_cleanup_all_sess
+@@ -933,7 +868,6 @@ static void dynamic_ifc_cleanup_all_sess
  		lo->skip_copy = 0;
  	}
  
@@ -139,7 +139,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	spin_unlock_irqrestore(&dynamic_ifc_lock, flags);
  
  	for (i = 0; i < MAX_DYNAMIC_IFC_NUM; i++) {
-@@ -954,7 +888,6 @@ static int dynamic_ifc_seq_show(struct s
+@@ -953,7 +887,6 @@ static int dynamic_ifc_seq_show(struct s
  	unsigned long flags;
  
  	seq_printf(m, "arht_dynamic_ifc: %s\n", READ_ONCE(dynamic_ifc_enable) ? "enabled" : "disabled");
@@ -147,7 +147,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	seq_printf(m, "Apps: ");
  	spin_lock_irqsave(&dynamic_ifc_lock, flags);
-@@ -1100,17 +1033,6 @@ static ssize_t dynamic_ifc_write_proc(st
+@@ -1099,17 +1032,6 @@ static ssize_t dynamic_ifc_write_proc(st
  			}
  			pr_info("arht_dynamic_ifc: debug_level = %d\n", debug_level);
  		}
@@ -167,7 +167,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		val = 0;
 --- a/drivers/net/ethernet/airoha/arht_wifi_lo.c
 +++ b/drivers/net/ethernet/airoha/arht_wifi_lo.c
-@@ -51,11 +51,6 @@
+@@ -63,11 +63,6 @@ int (*dynamic_ifc_sock_in_use_hook)(u16
   * -------------------------------------------------------------------------
   */
  
@@ -179,7 +179,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static struct wifi_lo wifi_lo_ety[WIFI_LO_MAX_NUM];
  
  /*
-@@ -125,58 +120,6 @@ static bool wifi_lo_wifi_only = true;
+@@ -137,58 +132,6 @@ static bool wifi_lo_wifi_only = true;
  
  /*
   * -------------------------------------------------------------------------
@@ -238,7 +238,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
   *   App-list helpers (RCU snapshot; (6))
   * -------------------------------------------------------------------------
   */
-@@ -798,16 +741,8 @@ static void wifi_lo_timeout(struct timer
+@@ -810,16 +753,8 @@ static void wifi_lo_timeout(struct timer
  
  	spin_unlock_bh(&wifi_lo_lock);
  
@@ -256,7 +256,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	if (dst_to_release)
  		dst_release(dst_to_release);
-@@ -881,8 +816,6 @@ static void wifi_lo_add_ety(struct sk_bu
+@@ -893,8 +828,6 @@ static void wifi_lo_add_ety(struct sk_bu
  		smp_wmb();
  		set_bit(WIFI_LO_F_VALID, &lo->flags);
  
@@ -265,7 +265,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		timer_setup(&lo->age_timer, wifi_lo_timeout, 0);
  		mod_timer(&lo->age_timer,
  		          jiffies + WIFI_LO_EXPIRE_TIME);
-@@ -1095,8 +1028,6 @@ static ssize_t wifi_lo_proc_read(struct
+@@ -1107,8 +1040,6 @@ static ssize_t wifi_lo_proc_read(struct
  
  	remain = WIFI_LO_PROC_BUFSZ;
  
@@ -274,7 +274,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	APPEND("wifi_only: %d\n", READ_ONCE(wifi_lo_wifi_only) ? 1 : 0);
  	APPEND("active_sessions: %d\n", atomic_read(&wifi_lo_active_num));
  
-@@ -1158,23 +1089,7 @@ static ssize_t wifi_lo_proc_write(struct
+@@ -1170,23 +1101,7 @@ static ssize_t wifi_lo_proc_write(struct
  	if (sscanf(str, "%31s", cmd) < 1)
  		return -EINVAL;
  

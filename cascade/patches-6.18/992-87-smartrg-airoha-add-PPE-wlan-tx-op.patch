@@ -135,15 +135,15 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	eth->ppe = ppe;
 --- a/drivers/net/ethernet/airoha/arht_dp_api.c
 +++ b/drivers/net/ethernet/airoha/arht_dp_api.c
-@@ -1366,7 +1366,7 @@ static void airoha_get_entry_bind(u32 ms
- 			flow_e->ingress_dev_idx = (lan_id == ETH2) ? ETH2
- 								    : LAN_IDX_FROM_SPTAG(sptag);
+@@ -1364,7 +1364,7 @@ static void airoha_get_entry_bind(u32 ms
+ 			if(airoha_get_lan_id(q->skb->dev)==ETH2)
+ 				flow_e->ingress_dev_idx = ETH2;
  		}
 -		airoha_ppe_check_skb(&eth->ppe->dev, q->skb, hash, false);
 +		airoha_ppe_check_skb(&eth->ppe->dev, q->skb, hash, reason, false);
- 		arht_ppe_multicast_handler(eth->ppe, q->skb);
- 
- 	} else {
+ 		if(arht_xpon_igmp_sfu_enable_hook == NULL){
+ 			arht_ppe_multicast_handler(eth->ppe, q->skb);
+ 		}
 @@ -1652,12 +1652,18 @@ EXPORT_SYMBOL(qdma_wan_tx);
  
  void arht_ppe_foe_flow_update_wifi_npu_offload(struct sk_buff *skb, struct port_info *pinfo)
@@ -165,7 +165,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		return 1;
 --- a/drivers/net/ethernet/airoha/arht_ppe.c
 +++ b/drivers/net/ethernet/airoha/arht_ppe.c
-@@ -3259,7 +3259,7 @@ void npu_get_entry_bind(struct sk_buff *
+@@ -3395,7 +3395,7 @@ void npu_get_entry_bind(struct sk_buff *
  		struct airoha_flow_table_entry *flow_e = airoha_flow_table_entry_get_by_hash(glb_eth->ppe, hash);
  		if(flow_e)
  			flow_e->ingress_dev_idx = WIFI_DEV;			
@@ -174,7 +174,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	}
  }
  
-@@ -3433,6 +3433,32 @@ unlock:
+@@ -3569,6 +3569,32 @@ unlock:
  	}
  }
  

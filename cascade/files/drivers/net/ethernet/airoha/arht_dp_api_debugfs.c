@@ -870,6 +870,35 @@ static const struct file_operations airoha_dp_api_debugfs_pon_serdes_mode_fops =
 	.read = airoha_pon_serdes_mode_read,
 };
 
+extern atomic_t fe_core_reset_count;
+
+static ssize_t airoha_fe_cr_cnt_read(struct file *file, char __user *buf,
+				      size_t count, loff_t *ppos)
+{
+	ssize_t buf_size = 32;
+	ssize_t ret = 0;
+	char *debugfs_buffer;
+	int index = 0;
+
+	debugfs_buffer = kmalloc(buf_size, GFP_KERNEL);
+	if (!debugfs_buffer)
+		return -ENOMEM;
+
+	index += scnprintf(debugfs_buffer + index, buf_size - index,
+			   "%u\n", atomic_read(&fe_core_reset_count));
+
+	ret = simple_read_from_buffer(buf, count, ppos, debugfs_buffer, index);
+
+	kfree(debugfs_buffer);
+
+	return ret;
+}
+
+static const struct file_operations airoha_dp_api_debugfs_fe_cr_cnt_fops = {
+	.read    = airoha_fe_cr_cnt_read,
+	.llseek  = default_llseek,
+};
+
 int airoha_dp_api_debugfs_init(struct airoha_eth *eth)
 {
 	struct dentry *root;
@@ -895,7 +924,9 @@ int airoha_dp_api_debugfs_init(struct airoha_eth *eth)
 				&airoha_dp_api_debugfs_shrink_table_debug_fops);
 	debugfs_create_file("pon_serdes_mode", 0644, root, NULL,
 				&airoha_dp_api_debugfs_pon_serdes_mode_fops);
-				
+	debugfs_create_file("fe_cr_cnt", 0444, root, NULL,
+				&airoha_dp_api_debugfs_fe_cr_cnt_fops);
+
 	return 0;
 }
 

@@ -1,6 +1,11 @@
 #ifndef _ARHT_FE_H_
 #define _ARHT_FE_H_
 
+#include <linux/bits.h>
+#define AIROHA_MAX_NUM_PPE		2
+#define REG_TDMA_GLO_CFG			0x0a04
+#define TDMA_GLO_CFG_RX_DMA_EN_MASK		BIT(2)
+#define TDMA_GLO_CFG_TX_DMA_EN_MASK		BIT(0)
 int fe_api_set_pkt_length(struct ecnt_fe_data *fe_data);
 
 int fe_api_set_channel_enable(struct ecnt_fe_data *fe_data);
@@ -171,6 +176,8 @@ int fe_api_set_dev_stat_ratelimit_mode(struct ecnt_fe_data *fe_data);
 
 
 void airoha_fe_core_reset(struct airoha_eth *eth);
+void airoha_fe_do_core_reset(struct airoha_eth *eth);
+extern atomic_t fe_core_reset_count;
 void airoha_fe_pse_oq_set_fc_disable(struct airoha_eth *eth, u32 port, u32 queue);
 int airoha_fe_gdm_rls(struct airoha_gdm_port *port);
 

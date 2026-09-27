@@ -49,14 +49,15 @@ ECONET SOFTWARE.
 
 #define PPE_MAGIC_LOCAL_OUT		0x72B0
 #define PPE_MAGIC_LOCAL_IN		0x72B1
-#define PPE_MAGIC_LOCAL_IN_NS   0x72B3 //NO SHORTCUT
+#define PPE_MAGIC_LOCAL_IN_NS   0x72B3 //NO SHORTCUT 
+#define PPE_MAGIC_DYNAMIC_IFC		0x72b2
 
 /***************************************
  arht UDF in ppe entry
 ***************************************/
 #define PPE_UDF_LOCAL_IN	0xA0
 #define PPE_UDF_MULTICAST	0xA1
-#define PPE_UDF_LOCAL_IN_NS 0xA3 //NO SHORTCUT
+#define PPE_UDF_LOCAL_IN_NS 0xA3 //NO SHORTCUT 
 
 /************************************************************************
 *				D A T A   T Y P E S

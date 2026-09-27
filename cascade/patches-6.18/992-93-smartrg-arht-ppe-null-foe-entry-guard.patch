@@ -15,7 +15,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/airoha/arht_ppe.c
 +++ b/drivers/net/ethernet/airoha/arht_ppe.c
-@@ -554,6 +554,11 @@ int arht_ppe_multicast_handler(struct ai
+@@ -568,6 +568,11 @@ int arht_ppe_multicast_handler(struct ai
  		hwe = airoha_ppe_foe_get_entry_locked(ppe, foe_index);
  		spin_unlock_bh(&ppe_lock);
  

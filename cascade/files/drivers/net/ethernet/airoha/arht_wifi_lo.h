@@ -144,8 +144,6 @@ extern int (*offload_eth_fast_tx_hook)(struct sk_buff *skb, int channel);
 extern int (*arht_force_to_cpu_prepare_gro_hook)(struct sk_buff *skb, bool ipv6);
 extern int (*local_out_pingpong_hook)(struct sk_buff *skb);
 extern int (*dynamic_ifc_sock_in_use_hook)(u16 lport, u16 rport);
-extern int arht_skip_copy_kprobe_enable(void);
-extern void arht_skip_copy_kprobe_disable(void);
 extern int (*ra_sw_nat_hook_clean_entry_by_port)(u16 src_port, u16 dest_port);
 extern struct dst_entry *arht_gen_dst_clone(struct dst_entry *dst);
 

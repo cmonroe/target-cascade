@@ -11,7 +11,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/airoha/airoha_eth_extra.c
 +++ b/drivers/net/ethernet/airoha/airoha_eth_extra.c
-@@ -78,7 +78,6 @@ static int arht_extra_hw_init(struct air
+@@ -83,7 +83,6 @@ static int arht_extra_hw_init(struct air
  
  	airoha_qdma_multicast_init(eth);
  	arht_ppe_init(ppe);

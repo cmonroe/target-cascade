@@ -412,7 +412,7 @@ static struct dynamic_ifc* find_dynamic_ifc_ety_by_port(unsigned short local_por
 
 static void dynamic_ifc_timeout(struct timer_list *arg)
 {
-	struct dynamic_ifc *e = from_timer(e, arg, age_timer);
+	struct dynamic_ifc *e = timer_container_of(e, arg, age_timer);
 	int i;
 	unsigned long flags;
 	struct sock *sk_to_release = NULL;
@@ -617,6 +617,9 @@ static int local_out_pingpong(struct sk_buff *skb)
 		return 0;
 	}
 
+	skb_pull(skb, ETH_HLEN);       /* remove the fake ETH header */       
+	skb_reset_network_header(skb);
+
 	if (unlikely(!skb->sk)) {
 		tx_dst_clone->output(dev_net(tx_dst_clone->dev), NULL, skb);
 	} else {
@@ -760,6 +763,9 @@ int difc_handle_local_out(struct sock *sk, struct sk_buff *skb,
 						  bool is_ipv4, uint8_t *mac,
 						  int (*fast_tx_fn)(struct sk_buff *, int))
 {
+	if (skb->inner_protocol == PPE_MAGIC_DYNAMIC_IFC){   
+		return 0;      /* already been around once, let it go */
+		}	
 	struct dynamic_ifc *lo;
 	unsigned long flags;
 	struct iphdr *iph;
@@ -893,7 +899,7 @@ static void dynamic_ifc_cleanup_all_sessions(void)
 	
 	for (i = 0; i < MAX_DYNAMIC_IFC_NUM; i++) {
 		if (need_timer_sync[i])
-			del_timer_sync(&dynamic_ifc_ety[i].age_timer);
+			timer_delete_sync(&dynamic_ifc_ety[i].age_timer);
 	}
 
 	spin_lock_irqsave(&dynamic_ifc_lock, flags);

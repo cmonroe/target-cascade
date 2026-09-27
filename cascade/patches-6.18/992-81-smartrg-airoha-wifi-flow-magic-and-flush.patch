@@ -45,7 +45,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  void arht_conntrack_get_cnt(u32 hash, struct airoha_foe_stats64 *stats);
 --- a/drivers/net/ethernet/airoha/arht_dp_api.c
 +++ b/drivers/net/ethernet/airoha/arht_dp_api.c
-@@ -617,13 +617,12 @@ static void delete_conntrack_by_tuple(__
+@@ -603,13 +603,12 @@ static void delete_conntrack_by_tuple(__
  	
  }
  
@@ -61,7 +61,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
      rhashtable_walk_enter(flow_table, &iter);
      ret = rhashtable_walk_start_check(&iter);
      if (ret) {
-@@ -638,7 +637,7 @@ void airoha_flow_table_entries_lan(struc
+@@ -624,7 +623,7 @@ void airoha_flow_table_entries_lan(struc
  		{
  			break;
  		}
@@ -70,7 +70,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
              int type = FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, e->data.ib1);
  			u32 state = FIELD_GET(AIROHA_FOE_IB1_BIND_STATE, e->data.ib1);
  			u8 is_udp = FIELD_GET(AIROHA_FOE_IB1_BIND_UDP, e->data.ib1);
-@@ -647,12 +646,12 @@ void airoha_flow_table_entries_lan(struc
+@@ -633,12 +632,12 @@ void airoha_flow_table_entries_lan(struc
  			if (state != AIROHA_FOE_STATE_BIND)
  				continue;
  
@@ -87,7 +87,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
                  delete_conntrack_by_tuple(ntohl(tuple->src_ip), ntohl(tuple->dest_ip),
                                           ntohs(tuple->src_port), ntohs(tuple->dest_port),l4proto);
              } else if (type == PPE_PKT_TYPE_IPV4_DSLITE) {
-@@ -677,6 +676,18 @@ out:
+@@ -663,6 +662,18 @@ out:
      rhashtable_walk_exit(&iter);
  }
  
@@ -118,7 +118,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	static const char *const ppe_type[] = {
 --- a/drivers/net/ethernet/airoha/arht_ppe.c
 +++ b/drivers/net/ethernet/airoha/arht_ppe.c
-@@ -3493,6 +3493,7 @@ void airoha_set_flow_destination(struct
+@@ -3629,6 +3629,7 @@ void airoha_set_flow_destination(struct
  
          if(arht_foe_entry_is_wifi(&e->data)){
                  AIROHA_LOG(AIROHA_DEBUG_LEVEL_ERR, "destination set to WIFI\n");
@@ -126,7 +126,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
                  /* mt76 NPU egress is fully described at rule-replace time via
                   * dev_fill_forward_path(); no QDMA TX pass ever runs for wifi
                   * to set tx_modified, so grant commit-eligibility here.
-@@ -4163,6 +4164,14 @@ static int airoha_ppe_netdev_event(struc
+@@ -4303,6 +4304,14 @@ static int airoha_ppe_netdev_event(struc
  	switch (event) {
  	case NETDEV_UNREGISTER:
  		airoha_ppe_clean_entry_by_landev(dev);

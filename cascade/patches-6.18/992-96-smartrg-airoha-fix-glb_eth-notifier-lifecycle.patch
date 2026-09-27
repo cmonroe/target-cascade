@@ -60,7 +60,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  int g_pon_serdes_eth = 0;
  
  static const struct ring_dscp_map ring_dscp_table[] = {
-@@ -262,6 +272,9 @@ int arht_extra_probe(struct airoha_eth *
+@@ -267,6 +277,9 @@ int arht_extra_probe(struct airoha_eth *
  	arht_read_dscp_num_from_dts(eth);
  	airoha_eth_qdma_fastpath_default_cfg(eth);
  	glb_eth = eth;
@@ -100,7 +100,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  }
 --- a/drivers/net/ethernet/airoha/arht_ppe.c
 +++ b/drivers/net/ethernet/airoha/arht_ppe.c
-@@ -3661,6 +3661,13 @@ void airoha_pon_set_macaddr(const u8 *ad
+@@ -3801,6 +3801,13 @@ void airoha_pon_set_macaddr(const u8 *ad
  	u32 val, reg;
  	struct airoha_eth *eth = glb_eth;
  
@@ -114,7 +114,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	reg = REG_FE_WAN_MAC_H;
  	val = (addr[0] << 16) | (addr[1] << 8) | addr[2];
  	airoha_fe_wr(eth, reg, val);
-@@ -4249,6 +4256,8 @@ static struct notifier_block airoha_ppe_
+@@ -4389,6 +4396,8 @@ static struct notifier_block airoha_ppe_
  	.notifier_call = airoha_ppe_netdev_event,
  };
  
@@ -123,7 +123,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  void arht_ppe_init(struct airoha_ppe *ppe)
  {
  	/*clear all sram ppe table*/
-@@ -4264,7 +4273,10 @@ void arht_ppe_init(struct airoha_ppe *pp
+@@ -4404,7 +4413,10 @@ void arht_ppe_init(struct airoha_ppe *pp
  	arht_ppe_general_init(ppe);
  	airoha_hwnat_loopback_init();
  
@@ -135,7 +135,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  }
  
  void arht_ppe_deinit(void)
-@@ -4279,5 +4291,8 @@ void arht_ppe_deinit(void)
+@@ -4419,5 +4431,8 @@ void arht_ppe_deinit(void)
  	arht_ppe_general_exit();
  	airoha_hwnat_loopback_exit();
  

@@ -43,6 +43,18 @@
 #include <ecnt_hook/ecnt_hook_gen_offload.h>
 #include "airoha_eth.h"
 #include "arht_wifi_lo.h"
+#include "arht_kprobe.h"
+
+/*
+ * Placeholder for the dynamic-ifc hook. This symbol is normally defined and
+ * EXPORT_SYMBOL'd by arht_dynamic_ifc.c, which is not built at the moment, so
+ * arht_wifi_lo would otherwise fail to link. Provide a weak NULL definition so
+ * it links standalone (a NULL hook simply means "no dynamic-ifc", matching the
+ * disabled behaviour). When arht_dynamic_ifc.c is compiled back in, its strong
+ * definition overrides this weak one automatically.
+ * NOTE: remove this once arht_dynamic_ifc.c is restored.
+ */
+int (*dynamic_ifc_sock_in_use_hook)(u16 lport, u16 rport) __weak;
 
 /*
  * -------------------------------------------------------------------------
@@ -746,7 +758,7 @@ static int wifi_lo_pingpong(struct sk_buff *skb)
 
 static void wifi_lo_timeout(struct timer_list *arg)
 {
-	struct wifi_lo *e = from_timer(e, arg, age_timer);
+	struct wifi_lo *e = timer_container_of(e, arg, age_timer);
 	int (*sock_in_use_fn)(u16, u16);
 	int (*ppe_clean_fn)(u16, u16);
 	struct dst_entry *dst_to_release = NULL;
@@ -900,9 +912,9 @@ static void wifi_lo_add_ety(struct sk_buff *skb, struct tcphdr *th)
 
 	wifi_lo_active_inc();
 
-	pr_info_ratelimited("wifi_lo: add_ety lport=%u rport=%u comm=%s\n",
+	/* pr_info_ratelimited("wifi_lo: add_ety lport=%u rport=%u comm=%s\n",
 	                    ntohs(th->source), ntohs(th->dest),
-	                    current->comm);
+	                    current->comm); */
 }
 
 /*
@@ -1045,28 +1057,28 @@ static struct nf_hook_ops wifi_lo_ipv4_local_in_ops = {
 	.hook		= wifi_lo_nf_hook_local_in,
 	.pf		= NFPROTO_IPV4,
 	.hooknum	= NF_INET_LOCAL_IN,
-	.priority	= NF_IP_PRI_FIRST,
+	.priority	= (NF_IP_PRI_CONNTRACK + 1),
 };
 
 static struct nf_hook_ops wifi_lo_ipv4_local_out_ops = {
 	.hook		= wifi_lo_nf_hook_local_out,
 	.pf		= NFPROTO_IPV4,
 	.hooknum	= NF_INET_LOCAL_OUT,
-	.priority	= NF_IP_PRI_FIRST,
+	.priority	= (NF_IP_PRI_CONNTRACK + 1),
 };
 
 static struct nf_hook_ops wifi_lo_ipv6_local_in_ops = {
 	.hook		= wifi_lo_nf_hook_local_in,
 	.pf		= NFPROTO_IPV6,
 	.hooknum	= NF_INET_LOCAL_IN,
-	.priority	= NF_IP6_PRI_FIRST,
+	.priority	= (NF_IP6_PRI_CONNTRACK + 1),
 };
 
 static struct nf_hook_ops wifi_lo_ipv6_local_out_ops = {
 	.hook		= wifi_lo_nf_hook_local_out,
 	.pf		= NFPROTO_IPV6,
 	.hooknum	= NF_INET_LOCAL_OUT,
-	.priority	= NF_IP6_PRI_FIRST,
+	.priority	= (NF_IP6_PRI_CONNTRACK + 1),
 };
 
 /*
@@ -1280,7 +1292,7 @@ static void __exit wifi_lo_exit(void)
 	synchronize_rcu();
 
 	for (i = 0; i < WIFI_LO_MAX_NUM; i++)
-		del_timer_sync(&wifi_lo_ety[i].age_timer);
+		timer_delete_sync(&wifi_lo_ety[i].age_timer);
 
 	spin_lock_bh(&wifi_lo_lock);
 	for (i = 0; i < WIFI_LO_MAX_NUM; i++) {

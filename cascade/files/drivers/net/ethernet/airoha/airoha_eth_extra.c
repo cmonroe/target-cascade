@@ -67,9 +67,14 @@ static int arht_extra_hw_init(struct airoha_eth *eth)
 	struct airoha_ppe *ppe = eth->ppe;
 	if (eth->extra_ops.set_fe_regs)
 		eth->extra_ops.set_fe_regs(eth);
+#ifdef CONFIG_NET_AIROHA_FLOW_STATS
+        /* Disable OQ flow control on CDM3 q5/q7 (NPU flow-stats cores).
+         * Each queue uses only its own OQ - no shared buffers, no backpressure.
+         * A slow core drops its own packets instead of stalling the datapath.
+         */
 	airoha_fe_pse_oq_set_fc_disable(eth, FE_PSE_PORT_CDM3, 5);
-	airoha_fe_pse_oq_set_fc_disable(eth, FE_PSE_PORT_CDM3, 6);
-
+	airoha_fe_pse_oq_set_fc_disable(eth, FE_PSE_PORT_CDM3, 7);
+#endif
 	for (i = 0; i < ARRAY_SIZE(eth->qdma); i++) {
 		airoha_dp_api_qdma_meter_default_config(&eth->qdma[i]);
 		if(eth->extra_ops.set_qdma_regs)

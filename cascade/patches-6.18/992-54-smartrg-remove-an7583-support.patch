@@ -35,7 +35,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  obj-$(CONFIG_NET_AIROHA_NPU) += airoha_npu.o airoha_npu_extra.o
 --- a/drivers/net/ethernet/airoha/airoha_eth_extra.c
 +++ b/drivers/net/ethernet/airoha/airoha_eth_extra.c
-@@ -167,34 +167,6 @@ static int arht_get_lro_dscp(struct airo
+@@ -172,34 +172,6 @@ static int arht_get_lro_dscp(struct airo
  	return dscp > 0 ? dscp : LRO_RX_DSCP_NUM;
  }
  
@@ -70,7 +70,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static const  struct arht_extra_ops an7581_extra_ops = {
  	/* common ops */
  	.set_mac_addr = arht_set_mac_addr,
-@@ -229,9 +201,6 @@ static void arht_config_extra_ops(struct
+@@ -234,9 +206,6 @@ static void arht_config_extra_ops(struct
  	if (airoha_is_7581(eth)) {
  		eth->extra_ops = an7581_extra_ops;
  		eth->qdma_init.speedtest_fastpath = 1;

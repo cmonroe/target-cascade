@@ -41,7 +41,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  #include <linux/notifier.h>
  
  #include "airoha_eth.h"
-@@ -82,6 +83,26 @@ static struct workqueue_struct *clean_en
+@@ -89,6 +90,26 @@ static struct workqueue_struct *clean_en
  *************************************************************************
  */
  extern spinlock_t ppe_lock;
@@ -68,7 +68,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  extern int (*ra_sw_nat_hook_clean_table) (void);
  
  int (*ra_sw_nat_hook_drop_packet) (struct sk_buff * skb) = NULL;
-@@ -1815,6 +1836,7 @@ int airoha_ppe_clean_entry_by_gemport(un
+@@ -1905,6 +1926,7 @@ int airoha_ppe_clean_entry_by_gemport(un
  
  	for (idx = 0; idx < ppe_num_entries;idx++)
  	{
@@ -76,7 +76,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
          foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
  
  		if(foe_entry == NULL){
-@@ -1870,6 +1892,7 @@ static int airoha_ppe_clean_entry_by_cha
+@@ -1966,6 +1988,7 @@ static int airoha_ppe_clean_entry_by_cha
  
  	for (idx = 0; idx < ppe_num_entries;idx++)
  	{
@@ -84,7 +84,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
          foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
  
  		if(foe_entry == NULL){
-@@ -1940,6 +1963,7 @@ static int airoha_ppe_clean_entry_by_fpo
+@@ -2041,6 +2064,7 @@ static int airoha_ppe_clean_entry_by_fpo
  
  	for (idx = 0; idx < ppe_num_entries; idx++)
  	{
@@ -92,7 +92,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
  
  		if(foe_entry == NULL){
-@@ -2005,6 +2029,7 @@ static int airoha_ppe_clean_entry_by_mac
+@@ -2106,6 +2130,7 @@ static int airoha_ppe_clean_entry_by_mac
  
  	for (idx = 0; idx < ppe_num_entries; idx++)
  	{
@@ -100,7 +100,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
  
  		if(foe_entry == NULL){
-@@ -2122,6 +2147,7 @@ static int airoha_ppe_clean_entry_by_typ
+@@ -2224,6 +2249,7 @@ static int airoha_ppe_clean_entry_by_typ
  	
  	for (idx = 0; idx < ppe_num_entries; idx++)
  	{
@@ -108,7 +108,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		foe_entry = &foe_entry_local;
  		foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
  
-@@ -2184,6 +2210,7 @@ static int airoha_ppe_clean_entry_by_ip(
+@@ -2292,6 +2318,7 @@ static int airoha_ppe_clean_entry_by_ip(
  
  	for (idx = 0; idx < ppe_num_entries; idx++)
  	{
@@ -116,7 +116,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
  		if(foe_entry == NULL){
  			continue;
-@@ -2271,6 +2298,7 @@ static int airoha_ppe_clean_entry_by_por
+@@ -2385,6 +2412,7 @@ static int airoha_ppe_clean_entry_by_por
      ppe_num_entries = airoha_ppe_get_total_num_entries(glb_eth->ppe);
      for (idx = 0; idx < ppe_num_entries; idx++)
      {
@@ -124,7 +124,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
          foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
          if (foe_entry == NULL) {
              continue;
-@@ -2376,6 +2404,7 @@ static int airoha_ppe_clean_entry_by_lan
+@@ -2483,6 +2511,7 @@ static int airoha_ppe_clean_entry_by_lan
  
  	for (idx = 0; idx < ppe_num_entries; idx++)
  	{

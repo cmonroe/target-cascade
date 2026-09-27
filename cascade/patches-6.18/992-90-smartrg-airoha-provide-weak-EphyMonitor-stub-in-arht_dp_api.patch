@@ -15,7 +15,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/airoha/arht_dp_api.c
 +++ b/drivers/net/ethernet/airoha/arht_dp_api.c
-@@ -61,7 +61,11 @@ extern int (*dynamic_ifc_sock_in_use_hoo
+@@ -61,7 +61,11 @@ extern int (*dynamic_ifc_pingpong_hook)(
  extern spinlock_t ppe_lock, flow_offload_lock;
  extern unchar ethmac_addr[6];
  

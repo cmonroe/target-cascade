@@ -11,8 +11,8 @@ pristine overlay sources unchanged:
   related files) reads gdm_dev->dev directly. Restore the member and
   set it at device allocation.
 
-The from_timer()/del_timer() aliases previously carried here were only
-needed by arht_dynamic_ifc.c, which the 2026Q2 vendor drop removed.
+The overlay sources use the 6.18 timer API, so no timer shim is
+needed.
 
 Signed-off-by: Chad Monroe <chad@monroe.io>
 ---
@@ -40,43 +40,3 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	DECLARE_BITMAP(qos_sq_bmap, AIROHA_NUM_QOS_CHANNELS);
  	/* qos stats counters */
---- a/drivers/net/ethernet/airoha/arht_dynamic_ifc.c
-+++ b/drivers/net/ethernet/airoha/arht_dynamic_ifc.c
-@@ -412,7 +412,7 @@ static struct dynamic_ifc* find_dynamic_
- 
- static void dynamic_ifc_timeout(struct timer_list *arg)
- {
--	struct dynamic_ifc *e = from_timer(e, arg, age_timer);
-+	struct dynamic_ifc *e = timer_container_of(e, arg, age_timer);
- 	int i;
- 	unsigned long flags;
- 	struct sock *sk_to_release = NULL;
-@@ -893,7 +893,7 @@ static void dynamic_ifc_cleanup_all_sess
- 	
- 	for (i = 0; i < MAX_DYNAMIC_IFC_NUM; i++) {
- 		if (need_timer_sync[i])
--			del_timer_sync(&dynamic_ifc_ety[i].age_timer);
-+			timer_delete_sync(&dynamic_ifc_ety[i].age_timer);
- 	}
- 
- 	spin_lock_irqsave(&dynamic_ifc_lock, flags);
---- a/drivers/net/ethernet/airoha/arht_wifi_lo.c
-+++ b/drivers/net/ethernet/airoha/arht_wifi_lo.c
-@@ -746,7 +746,7 @@ static int wifi_lo_pingpong(struct sk_bu
- 
- static void wifi_lo_timeout(struct timer_list *arg)
- {
--	struct wifi_lo *e = from_timer(e, arg, age_timer);
-+	struct wifi_lo *e = timer_container_of(e, arg, age_timer);
- 	int (*sock_in_use_fn)(u16, u16);
- 	int (*ppe_clean_fn)(u16, u16);
- 	struct dst_entry *dst_to_release = NULL;
-@@ -1280,7 +1280,7 @@ static void __exit wifi_lo_exit(void)
- 	synchronize_rcu();
- 
- 	for (i = 0; i < WIFI_LO_MAX_NUM; i++)
--		del_timer_sync(&wifi_lo_ety[i].age_timer);
-+		timer_delete_sync(&wifi_lo_ety[i].age_timer);
- 
- 	spin_lock_bh(&wifi_lo_lock);
- 	for (i = 0; i < WIFI_LO_MAX_NUM; i++) {
