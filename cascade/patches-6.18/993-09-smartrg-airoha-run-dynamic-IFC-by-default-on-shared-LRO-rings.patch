@@ -1,0 +1,595 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Sun, 27 Sep 2026 11:09:44 -0700
+Subject: [PATCH] net: airoha: run dynamic IFC by default on shared LRO rings
+
+Dynamic IFC steers the TCP flows of listed local applications to an
+LRO ring. The vendor code left it off until user space enabled it,
+and gave a ring to four sessions only. A session started only when
+the application sent, and two vendor components wrote the LRO
+aggregation limit of the ethernet driver.
+
+Dynamic IFC now starts when its IFC module loads, and stops when
+that module or the hook module goes away. A session without a ring
+slot shares an LRO ring, and the ring set follows the device tree.
+Ring 12 is the last slot, because it shares its interrupt with the
+TX completions. An application that only receives gets a session
+too. The ethernet driver is the only writer of the aggregation
+limit, so the agg_num command and the lro_agg_num line leave both
+proc files. bbst is in the default application list.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/arht_dynamic_ifc.c |  262 ++++++++-------
+ drivers/net/ethernet/airoha/arht_kprobe.c      |   14 
+ drivers/net/ethernet/airoha/arht_wifi_lo.c     |   89 -----
+ 3 files changed, 158 insertions(+), 207 deletions(-)
+
+--- a/drivers/net/ethernet/airoha/arht_dynamic_ifc.c
++++ b/drivers/net/ethernet/airoha/arht_dynamic_ifc.c
+@@ -57,11 +57,6 @@ static int debug_level = DEBUG_LEVEL_NON
+ static int dynamic_ifc_enable = 0;
+ static int ifc_ring_reserve[IFC_LRO_RING_NUM];
+ 
+-static u32 lro_agg_num_orig_cdm1 = 0;
+-static u32 lro_agg_num_orig_cdm2 = 0;
+-static bool lro_agg_num_saved = false;
+-static int lro_agg_num = LRO_AGG_NUM_DEFAULT;
+-
+ static struct dynamic_ifc dynamic_ifc_ety[MAX_DYNAMIC_IFC_NUM];
+ static char dynamic_ifc_apps[MAX_DYNAMIC_IFC_APP_NUM][TASK_COMM_LEN] = {0};
+ static int dynamic_ifc_app_valid[MAX_DYNAMIC_IFC_APP_NUM] = {0};
+@@ -94,14 +89,62 @@ static inline ecnt_hook_fn_t difc_get_ho
+ 	return READ_ONCE(__difc_ecnt_hook_fn);
+ }
+ 
++/* Ring 12 shares its interrupt with the TX completions, so it goes last. */
++static int ifc_slot_ring_get(unsigned int slot)
++{
++	return IFC_LRO_RING_START + (slot + 1) % IFC_LRO_RING_NUM;
++}
++
++/* An IFC rule matches on both ingress sides, so the ring must be an LRO
++ * ring on both QDMAs. The ethernet driver enables LRO only on a ring
++ * with descriptors, so a ring without them is not an LRO ring here.
++ */
++static bool ifc_ring_is_lro(int ring)
++{
++	struct airoha_eth *eth = READ_ONCE(glb_eth);
++	int i;
++
++	if (!eth)
++		return false;
++
++	for (i = 0; i < AIROHA_MAX_NUM_QDMA; i++) {
++		struct airoha_queue *q = &eth->qdma[i].q_rx[ring];
++
++		if (!q->ndesc || !airoha_qdma_is_lro_queue(q))
++			return false;
++	}
++
++	return true;
++}
++
++/* The default ring is behind the ring meter, so the sessions that get no
++ * slot share the LRO rings.
++ */
++static int ifc_overflow_ring_get(void)
++{
++	static unsigned int next;
++	int i, ring;
++
++	for (i = 0; i < IFC_LRO_RING_NUM; i++) {
++		ring = ifc_slot_ring_get(next++);
++		if (ifc_ring_is_lro(ring))
++			return ring;
++	}
++
++	return IFC_DEFAULT_RING;
++}
++
+ static int ifc_get_free_lro_ring(int entry_idx)
+ {
+ 	int i;
+ 
+ 	for (i = 0; i < IFC_LRO_RING_NUM; i++) 
+ 	{
++		if (!ifc_ring_is_lro(ifc_slot_ring_get(i)))
++			continue;
++
+ 		if (ifc_ring_reserve[i] == entry_idx){
+-			return (IFC_LRO_RING_START + i);
++			return ifc_slot_ring_get(i);
+ 		}
+ 
+ 		if (ifc_ring_reserve[i] != IFC_RING_SLOT_FREE) 
+@@ -112,21 +155,22 @@ static int ifc_get_free_lro_ring(int ent
+ 				!dynamic_ifc_ety[prev].ifc_valid) 
+ 			{
+ 				ifc_ring_reserve[i] = entry_idx;
+-				return (IFC_LRO_RING_START + i);
++				return ifc_slot_ring_get(i);
+ 			}
+ 		}
+ 	}
+ 
+ 	for (i = 0; i < IFC_LRO_RING_NUM; i++) 
+ 	{
+-		if (ifc_ring_reserve[i] == IFC_RING_SLOT_FREE) 
++		if (ifc_ring_reserve[i] == IFC_RING_SLOT_FREE &&
++		    ifc_ring_is_lro(ifc_slot_ring_get(i)))
+ 		{
+ 			ifc_ring_reserve[i] = entry_idx;
+-			return (IFC_LRO_RING_START + i);
++			return ifc_slot_ring_get(i);
+ 		}
+ 	}
+ 
+-	return IFC_DEFAULT_RING;
++	return ifc_overflow_ring_get();
+ }
+ 
+ /* Release ring reservation */
+@@ -144,7 +188,7 @@ static void ifc_release_lro_ring(int ent
+ 	}
+ }
+ 
+-/* Create IFC rule for a data session. First 4 data sessions get ring 12~15, rest get ring 1 (default).
++/* Create IFC rule for a data session. First 4 data sessions get ring 12~15, the rest share these rings.
+  *
+  * NOTE: This function is called under dynamic_ifc_lock (spinlock_irqsave).
+  * All IFC API functions used herein (DIFC_API_SET_LUT_RULE_AUTO,
+@@ -259,52 +303,6 @@ clear_state:
+ 	ifc_release_lro_ring(lo - dynamic_ifc_ety);
+ }
+ 
+-static void lro_save_and_set_agg_num(int agg_num)
+-{
+-	struct airoha_eth *eth;
+-
+-	if (lro_agg_num_saved) {
+-		return;
+-	}
+-
+-	eth = READ_ONCE(glb_eth);
+-	if (!eth || !eth->fe_regs) {
+-		pr_warn_ratelimited("arht_dynamic_ifc: glb_eth not ready\n");
+-		return;
+-	}
+-
+-	/* Save original agg_num values */
+-	lro_agg_num_orig_cdm1 = FIELD_GET(CDM_LRO_AGG_NUM_MASK, airoha_fe_rr(eth, REG_CDM_LRO_LIMIT(1)));
+-	lro_agg_num_orig_cdm2 = FIELD_GET(CDM_LRO_AGG_NUM_MASK, airoha_fe_rr(eth, REG_CDM_LRO_LIMIT(2)));
+-
+-	lro_agg_num_saved = true;
+-
+-	/* Set new agg_num for both CDM1 and CDM2 */
+-	airoha_fe_rmw(eth, REG_CDM_LRO_LIMIT(1), CDM_LRO_AGG_NUM_MASK, FIELD_PREP(CDM_LRO_AGG_NUM_MASK, agg_num));
+-	airoha_fe_rmw(eth, REG_CDM_LRO_LIMIT(2), CDM_LRO_AGG_NUM_MASK, FIELD_PREP(CDM_LRO_AGG_NUM_MASK, agg_num));
+-}
+-
+-static void lro_restore_agg_num(void)
+-{
+-	struct airoha_eth *eth;
+-
+-	if (!lro_agg_num_saved) {
+-		return;
+-	}
+-
+-	eth = READ_ONCE(glb_eth);
+-	if (!eth || !eth->fe_regs) {
+-		pr_warn_ratelimited("arht_dynamic_ifc: glb_eth not ready\n");
+-		return;
+-	}
+-
+-	/* Restore original agg_num for both CDM1 and CDM2 */
+-	airoha_fe_rmw(eth, REG_CDM_LRO_LIMIT(1), CDM_LRO_AGG_NUM_MASK, FIELD_PREP(CDM_LRO_AGG_NUM_MASK, lro_agg_num_orig_cdm1));
+-	airoha_fe_rmw(eth, REG_CDM_LRO_LIMIT(2), CDM_LRO_AGG_NUM_MASK, FIELD_PREP(CDM_LRO_AGG_NUM_MASK, lro_agg_num_orig_cdm2));
+-
+-	lro_agg_num_saved = false;
+-}
+-
+ static int is_dynamic_ifc_app(char * name)
+ {
+ 	int i;
+@@ -414,12 +412,10 @@ static struct dynamic_ifc* find_dynamic_
+ static void dynamic_ifc_timeout(struct timer_list *arg)
+ {
+ 	struct dynamic_ifc *e = timer_container_of(e, arg, age_timer);
+-	int i;
+ 	unsigned long flags;
+ 	struct sock *sk_to_release = NULL;
+ 	struct dst_entry *tx_dst_to_release = NULL;
+ 	struct dst_entry *rx_dst_to_release = NULL;
+-	bool has_active_session = false;
+ 
+ 	spin_lock_irqsave(&dynamic_ifc_lock, flags);
+ 	if (!e->valid) {
+@@ -455,17 +451,6 @@ static void dynamic_ifc_timeout(struct t
+ 	}
+ 	e->valid = 0;
+ 
+-	for (i = 0; i < MAX_DYNAMIC_IFC_NUM; i++) 
+-	{
+-		if (dynamic_ifc_ety[i].valid) {
+-			has_active_session = true;
+-			break;
+-		}
+-	}
+-
+-	if (!has_active_session) {
+-		lro_restore_agg_num();
+-	}
+ 	spin_unlock_irqrestore(&dynamic_ifc_lock, flags);
+ 
+ 	if (sk_to_release)
+@@ -676,7 +661,6 @@ void difc_add_entry_from_sock(struct soc
+ 			lo->ring_id = 0;
+ 			lo->timer_active = 1;
+ 
+-			lro_save_and_set_agg_num(READ_ONCE(lro_agg_num));
+ 			timer_setup(&lo->age_timer, dynamic_ifc_timeout, 0);
+ 			mod_timer(&lo->age_timer, jiffies + EXPIRE_TIME);
+ 			smp_wmb();
+@@ -933,7 +917,6 @@ static void dynamic_ifc_cleanup_all_sess
+ 		lo->skip_copy = 0;
+ 	}
+ 
+-	lro_restore_agg_num();
+ 	spin_unlock_irqrestore(&dynamic_ifc_lock, flags);
+ 
+ 	for (i = 0; i < MAX_DYNAMIC_IFC_NUM; i++) {
+@@ -953,7 +936,6 @@ static int dynamic_ifc_seq_show(struct s
+ 	unsigned long flags;
+ 
+ 	seq_printf(m, "arht_dynamic_ifc: %s\n", READ_ONCE(dynamic_ifc_enable) ? "enabled" : "disabled");
+-	seq_printf(m, "lro_agg_num: %d (default: %d)\n", lro_agg_num, LRO_AGG_NUM_DEFAULT);
+ 
+ 	seq_printf(m, "Apps: ");
+ 	spin_lock_irqsave(&dynamic_ifc_lock, flags);
+@@ -983,6 +965,84 @@ static int dynamic_ifc_proc_open(struct
+ 	return single_open(file, dynamic_ifc_seq_show, NULL);
+ }
+ 
++static int dynamic_ifc_start(void)
++{
++	int ret = 0;
++
++	mutex_lock(&dynamic_ifc_enable_mutex);
++	if (dynamic_ifc_enable) {
++		pr_info("arht_dynamic_ifc already enabled\n");
++		goto out;
++	}
++
++	ret = difc_resolve_ecnt_hook();
++	if (ret) {
++		pr_err("arht_dynamic_ifc enable failed - __ECNT_HOOK not available!!!");
++		goto out;
++	}
++
++	ret = arht_kprobe_difc_init();
++	if (ret) {
++		difc_clear_ecnt_hook();
++		pr_err("arht_dynamic_ifc enable failed - kprobe: %d\n", ret);
++		goto out;
++	}
++
++	WRITE_ONCE(dynamic_ifc_enable, 1);
++	pr_info("arht_dynamic_ifc enabled\n");
++out:
++	mutex_unlock(&dynamic_ifc_enable_mutex);
++
++	return ret;
++}
++
++static void dynamic_ifc_stop(void)
++{
++	mutex_lock(&dynamic_ifc_enable_mutex);
++	if (dynamic_ifc_enable) {
++		arht_kprobe_difc_exit();
++		WRITE_ONCE(dynamic_ifc_enable, 0);
++		dynamic_ifc_cleanup_all_sessions();
++		WRITE_ONCE(__difc_ecnt_hook_fn, NULL);
++		pr_info("arht_dynamic_ifc disabled\n");
++	} else {
++		pr_info("arht_dynamic_ifc already disabled\n");
++	}
++	mutex_unlock(&dynamic_ifc_enable_mutex);
++}
++
++static int dynamic_ifc_module_notify(struct notifier_block *nb,
++				     unsigned long state, void *data)
++{
++	struct module *mod = data;
++	bool is_hook = !strcmp(mod->name, "arht_hook");
++
++	if (!is_hook && strcmp(mod->name, "arht_ifc"))
++		return NOTIFY_DONE;
++
++	/* The IFC rules go through arht_ifc, and arht_ifc depends on
++	 * arht_hook, which holds __ECNT_HOOK.
++	 */
++	if (state == MODULE_STATE_LIVE && !is_hook)
++		dynamic_ifc_start();
++
++	if (state != MODULE_STATE_GOING)
++		return NOTIFY_DONE;
++
++	/* The module text goes away after this chain returns, and the exit
++	 * function of the module ran already, so arht_hook gets no more calls.
++	 */
++	if (is_hook)
++		difc_clear_ecnt_hook();
++	dynamic_ifc_stop();
++
++	return NOTIFY_DONE;
++}
++
++static struct notifier_block dynamic_ifc_module_nb = {
++	.notifier_call = dynamic_ifc_module_notify,
++};
++
+ static ssize_t dynamic_ifc_write_proc(struct file *file, const char __user *buf, size_t count, loff_t *ppos)
+ {
+ 	char str[64] = {0};
+@@ -1007,43 +1067,11 @@ static ssize_t dynamic_ifc_write_proc(st
+ 
+ 	if (!strcmp(cmd, "enable")) 
+ 	{
+-		mutex_lock(&dynamic_ifc_enable_mutex);
+-		if (!dynamic_ifc_enable) 
+-		{
+-			ret = difc_resolve_ecnt_hook();
+-			if (ret == 0)
+-			{
+-				ret = arht_kprobe_difc_init();
+-				if (ret == 0) {
+-					WRITE_ONCE(dynamic_ifc_enable, 1);
+-					pr_info("arht_dynamic_ifc enabled\n");
+-				} else {
+-					difc_clear_ecnt_hook();
+-					pr_err("arht_dynamic_ifc enable failed - kprobe: %d\n", ret);
+-					mutex_unlock(&dynamic_ifc_enable_mutex);
+-					return ret;
+-				}
+-			} else {
+-				pr_err("arht_dynamic_ifc enable failed - __ECNT_HOOK not available!!!");
+-				mutex_unlock(&dynamic_ifc_enable_mutex);
+-				return -ENODEV;
+-			}
+-		} else {
+-			pr_info("arht_dynamic_ifc already enabled\n");
+-		}
+-		mutex_unlock(&dynamic_ifc_enable_mutex);
++		ret = dynamic_ifc_start();
++		if (ret)
++			return ret;
+ 	} else if (!strcmp(cmd, "disable")) {
+-		mutex_lock(&dynamic_ifc_enable_mutex);
+-		if (dynamic_ifc_enable) {
+-			arht_kprobe_difc_exit();
+-			WRITE_ONCE(dynamic_ifc_enable, 0);
+-			dynamic_ifc_cleanup_all_sessions();
+-			WRITE_ONCE(__difc_ecnt_hook_fn, NULL);
+-			pr_info("arht_dynamic_ifc disabled\n");
+-		} else {
+-			pr_info("arht_dynamic_ifc already disabled\n");
+-		}
+-		mutex_unlock(&dynamic_ifc_enable_mutex);
++		dynamic_ifc_stop();
+ 	} else if (!strcmp(cmd, "debug")) {
+ 		if (sscanf(str, "%31s %d", cmd, &val) == 2) {
+ 			if (val) {
+@@ -1053,17 +1081,6 @@ static ssize_t dynamic_ifc_write_proc(st
+ 			}
+ 			pr_info("arht_dynamic_ifc: debug_level = %d\n", debug_level);
+ 		}
+-	} else if (!strcmp(cmd, "agg_num")) {
+-		if (sscanf(str, "%31s %d", cmd, &val) == 2) {
+-			if (val < LRO_AGG_NUM_MIN || val > LRO_AGG_NUM_MAX) {
+-				pr_err("arht_dynamic_ifc: agg_num out of range [%d, %d]\n", LRO_AGG_NUM_MIN, LRO_AGG_NUM_MAX);
+-			} else {
+-				WRITE_ONCE(lro_agg_num, val);
+-				pr_info("arht_dynamic_ifc: lro_agg_num = %d\n", lro_agg_num);
+-			}
+-		} else {
+-			pr_info("arht_dynamic_ifc: current lro_agg_num = %d\n", lro_agg_num);
+-		}
+ 	} else {
+ 		/* Original format: "1 iperf3" or "0 iperf3" - add/del app */
+ 		val = 0;
+@@ -1120,12 +1137,17 @@ static int __init arht_dynamic_ifc_init(
+ 
+ 	dynamic_ifc_app_list_add("iperf3");
+ 	dynamic_ifc_app_list_add("ookla");
++	dynamic_ifc_app_list_add("bbst");
++
++	register_module_notifier(&dynamic_ifc_module_nb);
+ 
+ 	return 0;
+ }
+ 
+ static void __exit arht_dynamic_ifc_exit(void)
+ {
++	unregister_module_notifier(&dynamic_ifc_module_nb);
++
+ 	if (df_proc_entry) {
+ 		remove_proc_entry("dynamic_ifc", NULL);
+ 		df_proc_entry = NULL;
+--- a/drivers/net/ethernet/airoha/arht_kprobe.c
++++ b/drivers/net/ethernet/airoha/arht_kprobe.c
+@@ -65,6 +65,11 @@ static struct kprobe kp_ip6_local_out;
+ static atomic_t skip_copy_kprobe_refcnt = ATOMIC_INIT(0);
+ static DEFINE_MUTEX(skip_copy_kprobe_mutex);
+ 
++/* The tcp_recvmsg probe is shared with the wifi local-in code, so it
++ * needs to know when the dynamic IFC probes are registered.
++ */
++static bool difc_kprobes_active;
++
+ 
+ /************************************************************************************************
+ *
+@@ -154,6 +159,13 @@ static int kp_tcp_recvmsg_pre(struct kpr
+ 		return 0;
+ 	}
+ 
++	/* A server socket of a listed application only receives, so the
++	 * tcp_sendmsg probe never sees it.
++	 */
++	if (READ_ONCE(difc_kprobes_active) && sk->sk_state == TCP_ESTABLISHED &&
++	    difc_is_current_app())
++		difc_add_entry_from_sock(sk);
++
+ 	if (READ_ONCE(sk->sk_mark) != SK_MARK_LOCAL_OFFLOAD){
+ 		return 0;
+ 	}
+@@ -455,6 +467,7 @@ int arht_kprobe_difc_init(void)
+ 		goto err_unreg_v4_rcv;
+ 	}
+ 
++	WRITE_ONCE(difc_kprobes_active, true);
+ 	pr_info("arht_kprobe: all kprobes registered successfully!\n");
+ 	return 0;
+ 
+@@ -486,6 +499,7 @@ EXPORT_SYMBOL(arht_kprobe_difc_init);
+ 
+ void arht_kprobe_difc_exit(void)
+ {
++	WRITE_ONCE(difc_kprobes_active, false);
+ 	unregister_kprobe(&kp_tcp_v6_do_rcv);
+ 	unregister_kprobe(&kp_tcp_v4_do_rcv);
+ 	unregister_kprobe(&kp_ip6_local_out);
+--- a/drivers/net/ethernet/airoha/arht_wifi_lo.c
++++ b/drivers/net/ethernet/airoha/arht_wifi_lo.c
+@@ -63,11 +63,6 @@ int (*dynamic_ifc_sock_in_use_hook)(u16
+  * -------------------------------------------------------------------------
+  */
+ 
+-static u32 lro_agg_num_orig_cdm1;
+-static u32 lro_agg_num_orig_cdm2;
+-static bool lro_agg_num_saved;
+-static int lro_agg_num = LRO_AGG_NUM_DEFAULT;
+-
+ static struct wifi_lo wifi_lo_ety[WIFI_LO_MAX_NUM];
+ 
+ /*
+@@ -137,58 +132,6 @@ static bool wifi_lo_wifi_only = true;
+ 
+ /*
+  * -------------------------------------------------------------------------
+- *   LRO aggregation-num register save/restore
+- * -------------------------------------------------------------------------
+- */
+-
+-static void wifi_lo_lro_save_and_set_agg_num(int agg_num)
+-{
+-	u32 val;
+-
+-	if (lro_agg_num_saved)
+-		return;
+-
+-	val = get_frame_engine_data(PHY_REG_CDM1_LRO_LIMIT);
+-	lro_agg_num_orig_cdm1 = (val & CDM_LRO_AGG_NUM_MASK_VAL) >> CDM_LRO_AGG_NUM_SHIFT;
+-
+-	val = get_frame_engine_data(PHY_REG_CDM2_LRO_LIMIT);
+-	lro_agg_num_orig_cdm2 = (val & CDM_LRO_AGG_NUM_MASK_VAL) >> CDM_LRO_AGG_NUM_SHIFT;
+-
+-	lro_agg_num_saved = true;
+-
+-	val = get_frame_engine_data(PHY_REG_CDM1_LRO_LIMIT);
+-	val &= ~CDM_LRO_AGG_NUM_MASK_VAL;
+-	val |= ((u32)agg_num << CDM_LRO_AGG_NUM_SHIFT) & CDM_LRO_AGG_NUM_MASK_VAL;
+-	set_frame_engine_data(PHY_REG_CDM1_LRO_LIMIT, val);
+-
+-	val = get_frame_engine_data(PHY_REG_CDM2_LRO_LIMIT);
+-	val &= ~CDM_LRO_AGG_NUM_MASK_VAL;
+-	val |= ((u32)agg_num << CDM_LRO_AGG_NUM_SHIFT) & CDM_LRO_AGG_NUM_MASK_VAL;
+-	set_frame_engine_data(PHY_REG_CDM2_LRO_LIMIT, val);
+-}
+-
+-static void wifi_lo_lro_restore_agg_num(void)
+-{
+-	u32 val;
+-
+-	if (!lro_agg_num_saved)
+-		return;
+-
+-	val = get_frame_engine_data(PHY_REG_CDM1_LRO_LIMIT);
+-	val &= ~CDM_LRO_AGG_NUM_MASK_VAL;
+-	val |= (lro_agg_num_orig_cdm1 << CDM_LRO_AGG_NUM_SHIFT) & CDM_LRO_AGG_NUM_MASK_VAL;
+-	set_frame_engine_data(PHY_REG_CDM1_LRO_LIMIT, val);
+-
+-	val = get_frame_engine_data(PHY_REG_CDM2_LRO_LIMIT);
+-	val &= ~CDM_LRO_AGG_NUM_MASK_VAL;
+-	val |= (lro_agg_num_orig_cdm2 << CDM_LRO_AGG_NUM_SHIFT) & CDM_LRO_AGG_NUM_MASK_VAL;
+-	set_frame_engine_data(PHY_REG_CDM2_LRO_LIMIT, val);
+-
+-	lro_agg_num_saved = false;
+-}
+-
+-/*
+- * -------------------------------------------------------------------------
+  *   App-list helpers (RCU snapshot; (6))
+  * -------------------------------------------------------------------------
+  */
+@@ -810,16 +753,8 @@ static void wifi_lo_timeout(struct timer
+ 
+ 	spin_unlock_bh(&wifi_lo_lock);
+ 
+-	/* Decrement the active-session counter; if this was the last live
+-	 * session and DIFC didn't claim it, restore the LRO knob. */
+-	if (atomic_dec_return(&wifi_lo_active_num) == 0) {
++	if (atomic_dec_return(&wifi_lo_active_num) == 0)
+ 		schedule_work(&wifi_lo_active_sync);	/* flip key -> off */
+-		if (!difc_active) {
+-			spin_lock_bh(&wifi_lo_lock);
+-			wifi_lo_lro_restore_agg_num();
+-			spin_unlock_bh(&wifi_lo_lock);
+-		}
+-	}
+ 
+ 	if (dst_to_release)
+ 		dst_release(dst_to_release);
+@@ -893,8 +828,6 @@ static void wifi_lo_add_ety(struct sk_bu
+ 		smp_wmb();
+ 		set_bit(WIFI_LO_F_VALID, &lo->flags);
+ 
+-		wifi_lo_lro_save_and_set_agg_num(lro_agg_num);
+-
+ 		timer_setup(&lo->age_timer, wifi_lo_timeout, 0);
+ 		mod_timer(&lo->age_timer,
+ 		          jiffies + WIFI_LO_EXPIRE_TIME);
+@@ -1107,8 +1040,6 @@ static ssize_t wifi_lo_proc_read(struct
+ 
+ 	remain = WIFI_LO_PROC_BUFSZ;
+ 
+-	APPEND("lro_agg_num: %d (default: %d)\n",
+-	       lro_agg_num, LRO_AGG_NUM_DEFAULT);
+ 	APPEND("wifi_only: %d\n", READ_ONCE(wifi_lo_wifi_only) ? 1 : 0);
+ 	APPEND("active_sessions: %d\n", atomic_read(&wifi_lo_active_num));
+ 
+@@ -1170,23 +1101,7 @@ static ssize_t wifi_lo_proc_write(struct
+ 	if (sscanf(str, "%31s", cmd) < 1)
+ 		return -EINVAL;
+ 
+-	if (!strcmp(cmd, "agg_num")) {
+-		if (sscanf(str, "%31s %d", cmd, &val) == 2) {
+-			if (val < LRO_AGG_NUM_MIN ||
+-			    val > LRO_AGG_NUM_MAX) {
+-				pr_err("wifi_lo: agg_num out of range [%d, %d]\n",
+-				       LRO_AGG_NUM_MIN,
+-				       LRO_AGG_NUM_MAX);
+-			} else {
+-				lro_agg_num = val;
+-				pr_info("wifi_lo: lro_agg_num = %d\n",
+-				        lro_agg_num);
+-			}
+-		} else {
+-			pr_info("wifi_lo: current lro_agg_num = %d\n",
+-			        lro_agg_num);
+-		}
+-	} else if (!strcmp(cmd, "wifi_only")) {
++	if (!strcmp(cmd, "wifi_only")) {
+ 		if (sscanf(str, "%31s %d", cmd, &val) == 2) {
+ 			WRITE_ONCE(wifi_lo_wifi_only, !!val);
+ 			pr_info("wifi_lo: wifi_only = %d\n", !!val);

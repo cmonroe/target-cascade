@@ -1,0 +1,330 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Sun, 27 Sep 2026 11:11:19 -0700
+Subject: [PATCH] net: airoha: run the Wi-Fi local fastpath on a VLAN-aware bridge
+
+On a bridge with VLAN filtering the IP address can be on a VLAN
+device, and no Wi-Fi flow to it took the fastpath. The fastpath
+looked for the Wi-Fi port only on a bridge master, with VLAN 0. A
+bound flow also lost data: frame padding became TCP data, and the
+fastpath dropped each frame of an entry without a session.
+
+A Wi-Fi flow to an address on a VLAN device of a bridge now takes
+the fastpath. A flow has at most one session, and a session binds
+only the entry that it holds. The end of a session releases its
+entry. The fastpath drops a frame without a session and releases
+its entry, so later frames take the normal receive path. A frame
+keeps its IP length, because the ethernet driver sets the length of
+an LRO aggregate. The entry skips the NPU flow counter, as upstream
+does for Wi-Fi receive; conntrack counts the flow.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/arht_ppe.c     |   52 +++++++++
+ drivers/net/ethernet/airoha/arht_ppe.h     |    2 
+ drivers/net/ethernet/airoha/arht_wifi_lo.c |  105 +++++++++++++------
+ drivers/net/ethernet/airoha/arht_wifi_lo.h |    2 
+ 4 files changed, 127 insertions(+), 34 deletions(-)
+
+--- a/drivers/net/ethernet/airoha/arht_ppe.c
++++ b/drivers/net/ethernet/airoha/arht_ppe.c
+@@ -1464,7 +1464,9 @@ int arht_general_offload_bind(struct sk_
+ 		airoha_set_ppe_mac(hwe,skb->dev,mac_h+6,mac_h,0);
+ 	}
+ 
+-	airoha_ppe_foe_commit_entry_ptr(glb_eth->ppe, hwe, foe_entry_idx, 0);
++	/* LOCAL_IN_NS entries come only from the Wi-Fi local fastpath. */
++	airoha_ppe_foe_commit_entry_ptr(glb_eth->ppe, hwe, foe_entry_idx,
++					type == PPE_UDF_LOCAL_IN_NS);
+ 
+ unlock:	
+ 	spin_unlock_bh(&ppe_lock);
+@@ -1473,6 +1475,54 @@ unlock:
+ }
+ EXPORT_SYMBOL(arht_general_offload_bind);
+ 
++void arht_general_offload_unbind(u32 foe_entry_idx, unsigned short type,
++				 u16 src_port, u16 dest_port)
++{
++	struct airoha_foe_entry *hwe;
++	u16 etype, sp, dp;
++
++	if (!glb_eth || !glb_eth->ppe)
++		return;
++
++	if (foe_entry_idx >= glb_eth->soc->ppe_sram_etry_num)
++		return;
++
++	spin_lock_bh(&ppe_lock);
++	hwe = airoha_ppe_foe_get_entry_locked(glb_eth->ppe, foe_entry_idx);
++	if (!hwe)
++		goto unlock;
++
++	if (FIELD_GET(AIROHA_FOE_IB1_BIND_STATE, hwe->ib1) != AIROHA_FOE_STATE_BIND)
++		goto unlock;
++
++	switch (FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, hwe->ib1)) {
++	case PPE_PKT_TYPE_IPV4_HNAPT:
++		etype = hwe->ipv4.l2.common.etype;
++		sp = hwe->ipv4.orig_tuple.src_port;
++		dp = hwe->ipv4.orig_tuple.dest_port;
++		break;
++	case PPE_PKT_TYPE_IPV6_ROUTE_5T:
++		etype = hwe->ipv6.l2.etype;
++		sp = hwe->ipv6.src_port;
++		dp = hwe->ipv6.dest_port;
++		break;
++	default:
++		goto unlock;
++	}
++
++	if (etype != type)
++		goto unlock;
++
++	/* Another flow can hold the index by now. */
++	if ((src_port || dest_port) && (sp != src_port || dp != dest_port))
++		goto unlock;
++
++	airoha_ppe_delete_entry(glb_eth->ppe, hwe, foe_entry_idx);
++unlock:
++	spin_unlock_bh(&ppe_lock);
++}
++EXPORT_SYMBOL(arht_general_offload_unbind);
++
+ inline static int airoha_is_local_out(struct sk_buff *skb)
+ {
+ 	return (skb->inner_protocol == PPE_MAGIC_LOCAL_OUT || skb->inner_protocol == PPE_MAGIC_DYNAMIC_IFC);
+--- a/drivers/net/ethernet/airoha/arht_ppe.h
++++ b/drivers/net/ethernet/airoha/arht_ppe.h
+@@ -140,6 +140,8 @@ int arht_multicast_handler_for_sfu(struc
+ int find_and_update_shrink_table(int select, struct hwnat_shrink_field *shrinkFieldPtr);
+ int ppe_dump_shrink_table(void);
+ int arht_general_offload_bind(struct sk_buff * skb, unsigned short type);
++void arht_general_offload_unbind(u32 foe_entry_idx, unsigned short type,
++				 u16 src_port, u16 dest_port);
+ int airoha_ppe_tx_handler(struct sk_buff *skb, struct port_info *pinfo, u8 fport);
+ void arht_ppe_general_init(struct airoha_ppe *ppe);
+ void arht_ppe_general_exit(void);
+--- a/drivers/net/ethernet/airoha/arht_wifi_lo.c
++++ b/drivers/net/ethernet/airoha/arht_wifi_lo.c
+@@ -272,29 +272,51 @@ static bool wifi_lo_is_wifi_dev(struct n
+     return dev && dev->ieee80211_ptr;
+ }
+ 
++static struct net_device *wifi_lo_bridge_master(struct net_device *dev,
++                                                u16 *vid)
++{
++	/* The bridge keys its FDB by the VLAN of the device directly on it. */
++	*vid = 0;
++	while (is_vlan_dev(dev)) {
++		*vid = vlan_dev_vlan_id(dev);
++		dev = vlan_dev_priv(dev)->real_dev;
++	}
++
++	if (!netif_is_bridge_master(dev))
++		return NULL;
++
++	/* A bridge without VLAN filtering learns each address with VID 0. */
++	if (!br_opt_get(netdev_priv(dev), BROPT_VLAN_ENABLED))
++		*vid = 0;
++
++	return dev;
++}
++
+ /*
+  * Resolve the pre-bridge ingress netdev for a packet arriving at
+- * IP LOCAL_IN. skb->dev at that point is the bridge master (br-lan)
+- * for any packet that traversed the bridge, so we ask the bridge FDB
+- * which port owns the source MAC.
++ * IP LOCAL_IN. skb->dev at that point is the bridge master, or a
++ * VLAN device on it (br-lan on a br0 with VLAN filtering), for any
++ * packet that traversed the bridge, so we ask the bridge FDB which
++ * port owns the source MAC in that VLAN.
+  *
+  * br_fdb_find_port has ASSERT_RTNL and we only hold rcu_read_lock here,
+  * so call br_fdb_find_rcu directly instead.
+  */
+-static struct net_device *wifi_lo_bridge_port(struct sk_buff *skb)
++static struct net_device *wifi_lo_bridge_port(struct sk_buff *skb,
++                                              struct net_device *br_dev,
++                                              u16 vid)
+ {
+ 	struct net_bridge_fdb_entry *f;
+ 	struct net_bridge *br;
+ 	struct net_device *dev = NULL;
+ 
+-	if (!skb->dev || !netif_is_bridge_master(skb->dev) ||
+-	    !skb_mac_header_was_set(skb))
++	if (!skb_mac_header_was_set(skb))
+ 		return NULL;
+ 
+-	br = netdev_priv(skb->dev);
++	br = netdev_priv(br_dev);
+ 
+ 	rcu_read_lock();
+-	f = br_fdb_find_rcu(br, eth_hdr(skb)->h_source, 0);
++	f = br_fdb_find_rcu(br, eth_hdr(skb)->h_source, vid);
+ 	if (f) {
+ 		const struct net_bridge_port *dst = READ_ONCE(f->dst);
+ 
+@@ -578,16 +600,21 @@ static int wifi_lo_prepare_gro(struct sk
+ 	struct wifi_lo *lo;
+ 	struct net_device *dev;
+ 	struct sock *sk;
++	u16 hash;
+ 
+ 	if (unlikely(!skb_mac_header_was_set(skb)))
+ 		goto free;
+ 
++	hash = FOE_ENTRY_NUM(skb);
++
+ 	/* Single RCU section covers the table lookup, the skip_copy set,
+ 	 * and the dev capture. (12) */
+ 	rcu_read_lock();
+-	lo = wifi_lo_find_by_hash(FOE_ENTRY_NUM(skb));
++	lo = wifi_lo_find_by_hash(hash);
+ 	if (unlikely(!lo)) {
+ 		rcu_read_unlock();
++		/* Only a session can deliver a frame of this entry. */
++		arht_general_offload_unbind(hash, PPE_UDF_LOCAL_IN_NS, 0, 0);
+ 		goto free;
+ 	}
+ 
+@@ -615,24 +642,6 @@ static int wifi_lo_prepare_gro(struct sk
+ 
+ 	skb->ip_summed = CHECKSUM_UNNECESSARY;
+ 
+-	/* LRO super-packet fixup (user note): we always come in here with
+-	 * LRO enabled, skb->len > MTU, and skb->data pointing at the IP
+-	 * header. Directly restamp the length -- no ntohs/compare needed.
+-	 * TCP checksum is skipped via CHECKSUM_UNNECESSARY (the driver's
+-	 * LRO aggregator already validated per-segment TCP csums during
+-	 * merging). */
+-	if (likely(!ipv6)) {
+-		struct iphdr *iph = (struct iphdr *)skb->data;
+-
+-		iph->tot_len = htons(skb->len);
+-		iph->check   = 0;
+-		iph->check   = ip_fast_csum((void *)iph, iph->ihl);
+-	} else {
+-		struct ipv6hdr *ip6h = (struct ipv6hdr *)skb->data;
+-
+-		ip6h->payload_len = htons(skb->len - sizeof(*ip6h));
+-	}
+-
+ 	return 1;
+ 
+ free:
+@@ -708,6 +717,7 @@ static void wifi_lo_timeout(struct timer
+ 	struct dst_entry *dst_to_release = NULL;
+ 	struct sock *sk_to_release = NULL;
+ 	bool difc_active = false;
++	u16 hash, lport, rport;
+ 
+ 	spin_lock_bh(&wifi_lo_lock);
+ 	if (time_before(jiffies, e->last_tx + WIFI_LO_EXPIRE_TIME)) {
+@@ -749,10 +759,18 @@ static void wifi_lo_timeout(struct timer
+ 
+ 	clear_bit(WIFI_LO_F_IS_WIFI, &e->flags);
+ 	clear_bit(WIFI_LO_F_VALID,   &e->flags);
++	hash = e->hash;
++	lport = ntohs(e->lport);
++	rport = ntohs(e->rport);
+ 	e->hash = 0;
+ 
+ 	spin_unlock_bh(&wifi_lo_lock);
+ 
++	/* The clean by port runs later, and not for a flow of dynamic IFC. */
++	if (hash)
++		arht_general_offload_unbind(hash, PPE_UDF_LOCAL_IN_NS,
++					    rport, lport);
++
+ 	if (atomic_dec_return(&wifi_lo_active_num) == 0)
+ 		schedule_work(&wifi_lo_active_sync);	/* flip key -> off */
+ 
+@@ -797,6 +815,12 @@ static void wifi_lo_add_ety(struct sk_bu
+ 		dst_hold(dst);
+ 
+ 	spin_lock_bh(&wifi_lo_lock);
++	/* The static key turns on from a work item, and two CPUs can miss
++	 * the lookup of the hook at the same time.
++	 */
++	if (wifi_lo_find_by_port(th->source, th->dest))
++		goto unlock;
++
+ 	for (i = 0; i < WIFI_LO_MAX_NUM; i++) {
+ 		lo = &wifi_lo_ety[i];
+ 		/* Skip both live slots and slots whose previous occupant is
+@@ -834,6 +858,7 @@ static void wifi_lo_add_ety(struct sk_bu
+ 		added = true;
+ 		break;
+ 	}
++unlock:
+ 	spin_unlock_bh(&wifi_lo_lock);
+ 
+ 	if (!added) {
+@@ -891,14 +916,16 @@ static unsigned int wifi_lo_nf_hook_loca
+ 
+ 	/*
+ 	 * Resolve the true ingress netdev for this packet:
+-	 *   1. Bridged: skb->dev is the bridge master; ask the bridge FDB
+-	 *      which port owns the source MAC.
++	 *   1. Bridged: skb->dev is the bridge master or a VLAN device on
++	 *      it; ask the bridge FDB which port owns the source MAC.
+ 	 *   2. Non-bridged: skb->dev is already the real netdev.
+ 	 */
+ 	if (!READ_ONCE(lo->dev) && skb->dev) {
+-		struct net_device *dev = netif_is_bridge_master(skb->dev)
+-			? wifi_lo_bridge_port(skb)
+-			: skb->dev;
++		struct net_device *br_dev, *dev;
++		u16 vid;
++
++		br_dev = wifi_lo_bridge_master(skb->dev, &vid);
++		dev = br_dev ? wifi_lo_bridge_port(skb, br_dev, vid) : skb->dev;
+ 
+ 		if (dev)
+ 			wifi_lo_publish_ingress_dev(lo, dev);
+@@ -911,12 +938,22 @@ static unsigned int wifi_lo_nf_hook_loca
+ 		return NF_ACCEPT;
+ 	}
+ 
++	if (!skb->l4_hash || skb->sw_hash)
++		goto out;
++
+ 	hash = FOE_ENTRY_NUM(skb);
+-	if (hash != 0 && READ_ONCE(lo->hash) == 0)
++	if (!hash || !glb_eth || hash >= glb_eth->soc->ppe_sram_etry_num)
++		goto out;
++
++	if (READ_ONCE(lo->hash) == 0)
+ 		wifi_lo_hash_publish(lo, hash);
+ 
++	if (READ_ONCE(lo->hash) != hash)
++		goto out;
++
+ 	pinfo.magic = PPE_MAGIC_LOCAL_IN_NS;
+ 	airoha_ppe_tx_handler(skb, &pinfo, 0);
++out:
+ 	rcu_read_unlock();
+ 
+ 	return NF_ACCEPT;
+@@ -978,6 +1015,8 @@ static unsigned int wifi_lo_nf_hook_loca
+ 			return NF_STOLEN;
+ 		}
+ 		rcu_read_unlock();
++		if (lo)
++			return NF_ACCEPT;
+ 	}
+ 
+ 	if (wifi_lo_app_match(current->comm))
+--- a/drivers/net/ethernet/airoha/arht_wifi_lo.h
++++ b/drivers/net/ethernet/airoha/arht_wifi_lo.h
+@@ -145,6 +145,8 @@ extern int (*arht_force_to_cpu_prepare_g
+ extern int (*local_out_pingpong_hook)(struct sk_buff *skb);
+ extern int (*dynamic_ifc_sock_in_use_hook)(u16 lport, u16 rport);
+ extern int (*ra_sw_nat_hook_clean_entry_by_port)(u16 src_port, u16 dest_port);
++extern void arht_general_offload_unbind(u32 foe_entry_idx, unsigned short type,
++					u16 src_port, u16 dest_port);
+ extern struct dst_entry *arht_gen_dst_clone(struct dst_entry *dst);
+ 
+ #endif

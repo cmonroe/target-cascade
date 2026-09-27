@@ -1,38 +1,25 @@
 From: Chad Monroe <chad@monroe.io>
-Date: Mon, 21 Sep 2026 08:16:06 -0700
-Subject: [PATCH] net: airoha: share the HW GRO state between QDMA users
+Date: Sun, 27 Sep 2026 11:06:29 -0700
+Subject: [PATCH] net: airoha: share the HW GRO state of a QDMA and enable HW GRO
 
-The CDM LRO engine is configured per QDMA, and all LAN net_devices use
-QDMA0. The vendor HW GRO patch removed the upstream rule that allowed
-the feature for a single QDMA user only, and left each net_device in
-control of the shared registers. With "rx-gro-hw off" on one
-net_device the hardware stopped aggregation for all of them, while the
-others still reported the feature as on.
+All LAN net_devices share one QDMA and its LRO engine, but the
+vendor HW GRO patch left each net_device in control of the engine.
+A change on one net_device changed the hardware for all, and the
+others reported the old state. HW GRO was also off after boot, and
+no SmartOS component sets it.
 
-A per-QDMA flag now holds the wanted state. The net_device that changes
-the feature sets the flag, programs the hardware one time and sets the
-same state on every other net_device of the QDMA, so all of them report
-the same state. The flag stops the sibling updates from programming the
-hardware again. The flag starts with the same value as the feature
-default of a new net_device, so a change on a net_device that is down
-takes effect on the whole QDMA.
-
-airoha_dev_open() follows the flag. If the QDMA wants the feature, open
-programs the engine. A GDM3 or GDM4 net_device can move between the
-QDMAs, so at open its feature bit can differ from the flag; open then
-sets the feature bit of the net_device to the flag. A move of a
-net_device that is up is not handled.
-
-The warning in airoha_dev_open() and its register helper go away,
-because a second user of a QDMA with HW GRO enabled is now the normal
-case. The ndo_fix_features callback goes away too, because the vendor
-patch left it with no rule to apply.
+A flag per QDMA now holds the wanted state, and every net_device of
+the QDMA reports it. An open programs the engine from the flag. HW
+GRO is on from the registration of each net_device, because a flow
+on an LRO ring gets no aggregation without it. ethtool can still
+turn it off. The driver does not follow a net_device that moves to
+the other QDMA while it is up.
 
 Signed-off-by: Chad Monroe <chad@monroe.io>
 ---
- drivers/net/ethernet/airoha/airoha_eth.c |   89 +++++++++++++++++++++----------
+ drivers/net/ethernet/airoha/airoha_eth.c |   92 ++++++++++++++-------
  drivers/net/ethernet/airoha/airoha_eth.h |    1 
- 2 files changed, 62 insertions(+), 28 deletions(-)
+ 2 files changed, 64 insertions(+), 29 deletions(-)
 
 --- a/drivers/net/ethernet/airoha/airoha_eth.c
 +++ b/drivers/net/ethernet/airoha/airoha_eth.c
@@ -49,7 +36,15 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static void airoha_dev_lro_enable(struct airoha_gdm_dev *dev)
  {
  	struct airoha_qdma *qdma = airoha_qdma_deref(dev);
-@@ -2144,6 +2138,49 @@ static void airoha_dev_set_mtu(struct ne
+@@ -1752,6 +1746,7 @@ static int airoha_qdma_init(struct platf
+ 	const char *res;
+ 
+ 	qdma->eth = eth;
++	qdma->hw_gro = true;
+ 	res = devm_kasprintf(eth->dev, GFP_KERNEL, "qdma%d", id);
+ 	if (!res)
+ 		return -ENOMEM;
+@@ -2144,6 +2139,49 @@ static void airoha_dev_set_mtu(struct ne
  			      FIELD_PREP(WAN_MTU0_MASK, netdev->mtu + VLAN_ETH_HLEN));
  }
  
@@ -99,7 +94,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static int airoha_dev_open(struct net_device *netdev)
  {
  	struct airoha_gdm_dev *dev = netdev_priv(netdev);
-@@ -2151,16 +2188,9 @@ static int airoha_dev_open(struct net_de
+@@ -2151,16 +2189,9 @@ static int airoha_dev_open(struct net_de
  	struct airoha_eth *eth = dev->eth;
  	struct airoha_qdma *qdma;
  	u32 pse_port = FE_PSE_PORT_PPE1;
@@ -117,7 +112,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	err = phylink_of_phy_connect(dev->phylink, netdev->dev.of_node, 0);
  	if (err) {
-@@ -2194,8 +2224,13 @@ static int airoha_dev_open(struct net_de
+@@ -2194,8 +2225,13 @@ static int airoha_dev_open(struct net_de
  	airoha_set_gdm_port_fwd_cfg(eth, REG_GDM_FWD_CFG(port->id),
  				    pse_port);
  
@@ -132,7 +127,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	airoha_update_netdev_features(dev);
  
-@@ -2546,17 +2581,6 @@ int airoha_get_fe_port(struct airoha_gdm
+@@ -2546,17 +2582,6 @@ int airoha_get_fe_port(struct airoha_gdm
  					   : port->id;
  }
  
@@ -150,7 +145,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static int airoha_dev_set_features(struct net_device *netdev,
  				   netdev_features_t features)
  {
-@@ -2564,15 +2588,25 @@ static int airoha_dev_set_features(struc
+@@ -2564,15 +2589,25 @@ static int airoha_dev_set_features(struc
  	struct airoha_gdm_dev *dev = netdev_priv(netdev);
  	struct airoha_qdma *qdma = airoha_qdma_deref(dev);
  	int qdma_id = qdma - &dev->eth->qdma[0];
@@ -177,7 +172,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	return 0;
  }
  
-@@ -3731,7 +3765,6 @@ static const struct net_device_ops airoh
+@@ -3731,7 +3766,6 @@ static const struct net_device_ops airoh
  	.ndo_stop		= airoha_dev_stop,
  	.ndo_change_mtu		= airoha_dev_change_mtu,
  	.ndo_select_queue	= airoha_dev_select_queue,
@@ -185,6 +180,15 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	.ndo_set_features	= airoha_dev_set_features,
  	.ndo_start_xmit		= airoha_dev_xmit,
  	.ndo_get_stats64        = airoha_dev_get_stats64,
+@@ -4001,7 +4035,7 @@ static int airoha_alloc_gdm_device(struc
+ 	netdev->max_mtu = AIROHA_MAX_MTU;
+ 	netdev->watchdog_timeo = 5 * HZ;
+ 	netdev->hw_features = AIROHA_HW_FEATURES | NETIF_F_GRO_HW;
+-	netdev->features |= AIROHA_HW_FEATURES;
++	netdev->features |= AIROHA_HW_FEATURES | NETIF_F_GRO_HW;
+ 	netdev->vlan_features = AIROHA_HW_FEATURES;
+ 	SET_NETDEV_DEV(netdev, eth->dev);
+ 
 --- a/drivers/net/ethernet/airoha/airoha_eth.h
 +++ b/drivers/net/ethernet/airoha/airoha_eth.h
 @@ -651,6 +651,7 @@ struct airoha_qdma {

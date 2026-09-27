@@ -1,28 +1,26 @@
 From: Chad Monroe <chad@monroe.io>
-Date: Tue, 30 Jun 2026 22:03:02 -0700
-Subject: [PATCH] airoha: don't drive phylink for internal GDM MACs
+Date: Sun, 27 Sep 2026 11:09:11 -0700
+Subject: [PATCH] net: airoha: do not drive phylink for internal GDM MACs
 
-The 6.18 mainline refactor made airoha_dev_open()/airoha_dev_stop()
-connect and start phylink unconditionally. The internal GDM MACs (the
-embedded switch on GDM1 and the PON MAC on GDM2) have no attachable PHY,
-so bringing them up fails with "could not attach PHY: -19". This broke
-GDM2/eth0, the netdev the PON stack uses for hardware offload resources,
-which came up fine on 6.12.
+The 6.18 driver connects and starts phylink at each open. The
+internal GDM MACs, the switch conduit and the PON MAC, have no PHY
+to attach, so their open failed. phylink also clears the carrier at
+its creation, so an internal MAC that does not start phylink stays
+without carrier.
 
-Restore the vendor guard so only external-PHY ports drive phylink at
-open/stop. setup_phylink() still runs at probe (phylink objects are
-created), so no other phylink paths regress.
+Only a port with an external PHY now drives phylink at open and
+stop. An internal MAC raises its carrier at open and drops it at
+stop. The phylink objects still exist for all ports.
 
-Fixes: OWRT-5260
-
+Co-developed-by: Scott Iveland <scott.iveland@adtran.com>
 Signed-off-by: Chad Monroe <chad@monroe.io>
 ---
- drivers/net/ethernet/airoha/airoha_eth.c |   33 +++++++++++++++------
- 1 file changed, 25 insertions(+), 8 deletions(-)
+ drivers/net/ethernet/airoha/airoha_eth.c |   40 ++++++++++++++++-----
+ 1 file changed, 32 insertions(+), 8 deletions(-)
 
 --- a/drivers/net/ethernet/airoha/airoha_eth.c
 +++ b/drivers/net/ethernet/airoha/airoha_eth.c
-@@ -2187,6 +2187,19 @@ static void airoha_qdma_gro_hw_sync(stru
+@@ -2188,6 +2188,19 @@ static void airoha_qdma_gro_hw_sync(stru
  	}
  }
  
@@ -42,7 +40,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static int airoha_dev_open(struct net_device *netdev)
  {
  	struct airoha_gdm_dev *dev = netdev_priv(netdev);
-@@ -2198,13 +2211,15 @@ static int airoha_dev_open(struct net_de
+@@ -2199,14 +2212,21 @@ static int airoha_dev_open(struct net_de
  
  	qdma = airoha_qdma_deref(dev);
  
@@ -50,21 +48,27 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 -	if (err) {
 -		netdev_err(netdev, "could not attach PHY: %d\n", err);
 -		return err;
--	}
 +	if (airoha_is_phy_external(port)) {
 +		err = phylink_of_phy_connect(dev->phylink, netdev->dev.of_node, 0);
 +		if (err) {
 +			netdev_err(netdev, "could not attach PHY: %d\n", err);
 +			return err;
 +		}
++
++		phylink_start(dev->phylink);
++	} else {
++		/* phylink_create() clears carrier and internal GDM MACs
++		 * never start phylink, so raise carrier manually
++		 */
++		netif_carrier_on(netdev);
+ 	}
  
 -	phylink_start(dev->phylink);
-+		phylink_start(dev->phylink);
-+	}
- 
+-
  	netif_tx_start_all_queues(netdev);
  	err = airoha_set_vip_for_gdm_port(dev, true);
-@@ -2265,8 +2280,10 @@ static int airoha_dev_stop(struct net_de
+ 	if (err)
+@@ -2266,8 +2286,12 @@ static int airoha_dev_stop(struct net_de
  	airoha_qdma_stop(qdma);
  	airoha_update_netdev_features(dev);
  
@@ -73,6 +77,8 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 +	if (airoha_is_phy_external(port)) {
 +		phylink_stop(dev->phylink);
 +		phylink_disconnect_phy(dev->phylink);
++	} else {
++		netif_carrier_off(netdev);
 +	}
  
  	return 0;

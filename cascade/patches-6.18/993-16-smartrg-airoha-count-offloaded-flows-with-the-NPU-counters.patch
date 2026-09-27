@@ -1,43 +1,88 @@
 From: Chad Monroe <chad@monroe.io>
-Date: Thu, 24 Sep 2026 13:01:57 -0700
-Subject: [PATCH] net: airoha: count flow deltas from the NPU low words
+Date: Sun, 27 Sep 2026 11:10:15 -0700
+Subject: [PATCH] net: airoha: count offloaded flows with the NPU counters
 
-The NPU keeps the low 32 bits of a flow counter in its SRAM and
-stores the carry to host memory first, with no fence. So a joined
-read near a wrap can be 4 GiB wrong, and a re-bind reported up to
-4 GiB too much because the bind kept the old baseline. The clear at
-each bind also raced the NPU, and Wi-Fi flows skipped it, so they
-inherited the counts of the last flow on their index.
+With flow counters on, a refusal of the NPU stopped all offload,
+and a zero counter address made the driver map address 0. A joined
+read of the two counter halves can be wrong by 4 GiB, and the bytes
+included the L2 headers. A new Wi-Fi flow got the counts of the
+last flow on its index.
 
-Each flow now reports the modular delta of the low words, from the
-counter value at its bind. The counts on an index go to its last
-holder, unless another entry holds it bound by then; those counts
-are its own. One read interval must carry less than 4 GiB: about
-8 Gbit/s per flow at the default flowtable timeout, and less with a
-longer one. Without NPU counters the vendor QDMA counters stay the
-source.
+A refusal or a zero counter address now leaves offload on without
+flow counters. The running firmware decides, because the kernel
+option and the firmware build can differ. Each flow reports the
+delta of the low counter words from its bind, and a routed flow
+reports L3 bytes as conntrack does. One read interval must carry
+less than 4 GiB per flow. Without NPU counters the vendor QDMA
+counters stay the source.
 
 Signed-off-by: Chad Monroe <chad@monroe.io>
 ---
- drivers/net/ethernet/airoha/airoha_eth.h |    3 
- drivers/net/ethernet/airoha/airoha_ppe.c |  142 +++++++++++++++++++--
- 2 files changed, 133 insertions(+), 12 deletions(-)
+ drivers/net/ethernet/airoha/airoha_eth.h |    5 
+ drivers/net/ethernet/airoha/airoha_npu.c |    8 
+ drivers/net/ethernet/airoha/airoha_ppe.c |  186 ++++++++++++++++++---
+ 3 files changed, 176 insertions(+), 23 deletions(-)
 
 --- a/drivers/net/ethernet/airoha/airoha_eth.h
 +++ b/drivers/net/ethernet/airoha/airoha_eth.h
-@@ -589,7 +589,8 @@ struct airoha_flow_table_entry {
+@@ -588,7 +588,9 @@ struct airoha_flow_table_entry {
  	struct hlist_node l2_subflow_node; /* PPE L2 subflow entry */
  	u32 hash;
  
 -	struct airoha_foe_stats64 stats;
 +	struct airoha_foe_stats64 stats; /* not yet reported */
 +	struct airoha_foe_stats stats_base; /* NPU low words at the last read */
++	u8 l2_len; /* bytes per packet the NPU counts beyond L3 */
  	enum airoha_flow_entry_type type;
  
  	enum magic e_magic; /* egress interface */
+@@ -695,6 +697,7 @@ struct airoha_ppe {
+ 
+ 	struct airoha_foe_stats *foe_stats;
+ 	dma_addr_t foe_stats_dma;
++	bool flow_stats;
+ 
+ 	struct dentry *debugfs_dir;
+ };
 --- a/drivers/net/ethernet/airoha/airoha_ppe.c
 +++ b/drivers/net/ethernet/airoha/airoha_ppe.c
-@@ -656,8 +656,108 @@ static void airoha_ppe_foe_flow_stats_re
+@@ -11,6 +11,7 @@
+ #include <linux/rhashtable.h>
+ #include <net/ipv6.h>
+ #include <linux/if_vlan.h>
++#include <linux/if_pppox.h>
+ #include <net/pkt_cls.h>
+ #include <net/route.h>
+ 
+@@ -44,10 +45,7 @@ static const struct rhashtable_params ai
+ 
+ static int airoha_ppe_get_num_stats_entries(struct airoha_ppe *ppe)
+ {
+-	if (!IS_ENABLED(CONFIG_NET_AIROHA_FLOW_STATS))
+-		return -EOPNOTSUPP;
+-
+-	if (airoha_is_7583(ppe->eth))
++	if (!ppe->flow_stats)
+ 		return -EOPNOTSUPP;
+ 
+ 	return PPE_STATS_NUM_ENTRIES;
+@@ -157,11 +155,10 @@ static void airoha_ppe_hw_init(struct ai
+ 		sram_ppe_num_data_entries -= sram_num_stats_entries;
+ 	sram_ppe_num_data_entries =
+ 		PPE_RAM_NUM_ENTRIES_SHIFT(sram_ppe_num_data_entries);
+-		
+-#ifdef CONFIG_NET_AIROHA_FLOW_STATS	
+-	airoha_fe_rmw(eth, PSE_FC_CFG, PSE_PORT6_SHARE_DIS, 
+-			FIELD_PREP(PSE_PORT6_SHARE_DIS, 0));
+-#endif
++
++	if (ppe->flow_stats)
++		airoha_fe_rmw(eth, PSE_FC_CFG, PSE_PORT6_SHARE_DIS,
++			      FIELD_PREP(PSE_PORT6_SHARE_DIS, 0));
+ 
+ 	for (i = 0; i < eth->soc->num_ppe; i++) {
+ 		airoha_fe_wr(eth, REG_PPE_TB_BASE(i),
+@@ -660,8 +657,122 @@ static void airoha_ppe_foe_flow_stats_re
  		airoha_ppe_foe_flow_stat_entry_reset(ppe, npu, i);
  }
  
@@ -142,12 +187,26 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 +		e->stats_base = (struct airoha_foe_stats){};
 +}
 +
++/* The NPU counts the frame after the PPE rewrite, conntrack counts L3. The
++ * DSA special tag is not part of the counted frame.
++ */
++static u8 airoha_ppe_foe_flow_l2_len(const struct airoha_foe_entry *hwe)
++{
++	u8 len = ETH_HLEN;
++
++	len += VLAN_HLEN * FIELD_GET(AIROHA_FOE_IB1_BIND_VLAN_LAYER, hwe->ib1);
++	if (FIELD_GET(AIROHA_FOE_IB1_BIND_PPPOE, hwe->ib1))
++		len += PPPOE_SES_HLEN;
++
++	return len;
++}
++
  static void airoha_ppe_foe_flow_stats_update(struct airoha_ppe *ppe,
 -					     struct airoha_npu *npu,
  					     struct airoha_foe_entry *hwe,
  					     u32 hash)
  {
-@@ -695,8 +795,6 @@ static void airoha_ppe_foe_flow_stats_up
+@@ -699,8 +810,6 @@ static void airoha_ppe_foe_flow_stats_up
  	if (pse_port == FE_PSE_PORT_CDM4)
  		return;
  
@@ -156,7 +215,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	val = FIELD_GET(AIROHA_FOE_CHANNEL | AIROHA_FOE_QID, *data);
  	*data = (*data & ~AIROHA_FOE_ACTDP) |
  		FIELD_PREP(AIROHA_FOE_ACTDP, val);
-@@ -827,7 +925,7 @@ int airoha_ppe_foe_commit_entry(struct a
+@@ -831,7 +940,7 @@ int airoha_ppe_foe_commit_entry(struct a
  	}
  
  	if (!rx_wlan)
@@ -165,15 +224,16 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	if (hash < sram_num_entries)
  		err = airoha_ppe_foe_commit_sram_entry(ppe, hash);
-@@ -995,6 +1093,7 @@ static void airoha_ppe_foe_insert_entry(
+@@ -999,6 +1108,8 @@ static void airoha_ppe_foe_insert_entry(
  		    ppe->eth->extra_ops.tx_modified(e, hash))
  			goto unlock;
  
 +		airoha_ppe_foe_flow_stats_claim(ppe, e, hash, index);
++		e->l2_len = airoha_ppe_foe_flow_l2_len(&e->data);
  		airoha_ppe_foe_commit_entry(ppe, &e->data, hash, rx_wlan);
  		commit_done = true;
  		e->hash = hash;
-@@ -1130,7 +1229,7 @@ static void airoha_ppe_foe_flow_entry_up
+@@ -1134,7 +1245,7 @@ static void airoha_ppe_foe_flow_entry_up
  
  	memcpy(&hwe, hwe_p, sizeof(*hwe_p));
  	if (!airoha_ppe_foe_compare_entry(e, &hwe)) {
@@ -182,7 +242,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		goto unlock;
  	}
  
-@@ -1430,15 +1529,36 @@ static int airoha_ppe_flow_offload_stats
+@@ -1434,15 +1545,40 @@ static int airoha_ppe_flow_offload_stats
  	idle = airoha_ppe_entry_idle_time(eth->ppe, e);
  	f->stats.lastused = jiffies - idle * HZ;
  
@@ -200,24 +260,28 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 +		}
 +		return 0;
 +	}
++
++	/* The vendor read also keeps its accounting reservation marked live. */
++	if (eth->extra_ops.conntrack_get_cnt && e->hash != 0xffff) {
++		struct airoha_foe_stats64 vendor = {};
  
 -		airoha_ppe_foe_entry_get_stats(eth->ppe, e->hash, &stats);
 -		f->stats.pkts += (stats.packets - e->stats.packets);
 -		f->stats.bytes += (stats.bytes - e->stats.bytes);
 -		e->stats = stats;
-+	/* The vendor read also keeps its accounting reservation marked live. */
-+	if (eth->extra_ops.conntrack_get_cnt && e->hash != 0xffff) {
-+		struct airoha_foe_stats64 vendor = {};
-+
 +		eth->extra_ops.conntrack_get_cnt(e->hash, &vendor);
  	}
  
-+	/* netfilter drops a delta with no packets, so keep bytes until one. */
++	/* netfilter drops a delta with no packets, so keep bytes until one.
++	 * The NPU stores the byte word before the packet word, so a read can
++	 * hold a packet whose bytes came with the previous read.
++	 */
 +	spin_lock_bh(&ppe_lock);
 +	airoha_ppe_foe_flow_stats_collect(eth->ppe, e);
-+	if (e->stats.packets) {
++	if (e->stats.packets &&
++	    e->stats.bytes >= e->stats.packets * e->l2_len) {
 +		f->stats.pkts += e->stats.packets;
-+		f->stats.bytes += e->stats.bytes;
++		f->stats.bytes += e->stats.bytes - e->stats.packets * e->l2_len;
 +		e->stats = (struct airoha_foe_stats64){};
 +	}
 +	spin_unlock_bh(&ppe_lock);
@@ -225,3 +289,44 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	return 0;
  }
  
+@@ -1538,8 +1674,12 @@ int airoha_ppe_offload_setup(struct airo
+ 	if (ppe_num_stats_entries > 0) {
+ 		err = npu->ops.ppe_init_stats(npu, ppe->foe_stats_dma,
+ 					      ppe_num_stats_entries);
+-		if (err)
+-			goto error_npu_put;
++		if (err) {
++			dev_warn(eth->dev,
++				 "NPU firmware refused flow stats setup (%d), offload runs without flow counters\n",
++				 err);
++			ppe->flow_stats = false;
++		}
+ 	}
+ 
+ 	airoha_ppe_hw_init(ppe);
+@@ -1703,6 +1843,8 @@ int airoha_ppe_init(struct airoha_eth *e
+ 	ppe->dev.ops.check_tx_skb = arht_ppe_check_tx_skb;
+ 	ppe->dev.priv = ppe;
+ 	ppe->eth = eth;
++	ppe->flow_stats = IS_ENABLED(CONFIG_NET_AIROHA_FLOW_STATS) &&
++			  !airoha_is_7583(eth);
+ 
+ 	ppe_num_entries = airoha_ppe_get_total_num_entries(ppe);
+ 	foe_size = ppe_num_entries * sizeof(struct airoha_foe_entry);
+--- a/drivers/net/ethernet/airoha/airoha_npu.c
++++ b/drivers/net/ethernet/airoha/airoha_npu.c
+@@ -365,6 +365,14 @@ static int airoha_npu_ppe_stats_setup(st
+ 	if (err)
+ 		goto out;
+ 
++	/* The firmware reports success with a zero address when its SRAM
++	 * pool has no room left for the counters.
++	 */
++	if (!ppe_data->stats_info.npu_stats_addr) {
++		err = -ENOSPC;
++		goto out;
++	}
++
+ 	npu->stats = devm_ioremap(npu->dev,
+ 				  ppe_data->stats_info.npu_stats_addr,
+ 				  size);

@@ -60,7 +60,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	}
  
  	return 0;
-@@ -4313,8 +4323,6 @@ static int airoha_probe(struct platform_
+@@ -4314,8 +4324,6 @@ static int airoha_probe(struct platform_
  	if (!eth->napi_dev)
  		return -ENOMEM;
  

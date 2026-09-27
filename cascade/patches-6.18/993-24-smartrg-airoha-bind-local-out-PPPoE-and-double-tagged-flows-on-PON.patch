@@ -1,46 +1,27 @@
 From: Chad Monroe <chad@monroe.io>
-Date: Sat, 26 Sep 2026 18:42:47 -0700
-Subject: [PATCH] net: airoha: bind PPPoE and double-tagged flows correctly
+Date: Sun, 27 Sep 2026 11:10:47 -0700
+Subject: [PATCH] net: airoha: bind local-out, PPPoE and double-tagged flows on PON
 
-A local-out flow on a PPPoE uplink was bound without the PPPoE header,
-so the PPE would send frames that the access concentrator drops. The
-DSCP of each PPPoE flow came from the PPPoE header, not from the IP
-header, and the collision check compared no address behind a PPPoE
-header. On a PON uplink with two tags, the transmit path added one
-VLAN layer to the two that the flow rule set.
+The vendor 6.18 feed stopped the bind call of the PON transmit
+path, the only place that binds a local-out flow. Such a flow
+stayed on the metered CPU ring, and its bind wrote no PPPoE header
+and read the DSCP from the PPPoE header. The update of a forwarded
+flow with two tags added a third VLAN layer.
 
-The bind now sets the PPPoE bit and the session of the frame for a
-routed entry, and the DSCP and the collision check read the IP header
-behind a PPPoE header. The PON transmit path sets the VLAN layer
-count, the outer TPID and the PPPoE bit from the frame, as the bind
-does. The session is written in full, because a reused entry still
-holds the session of its last flow.
+The PON transmit path binds local-out flows again. A forwarded flow
+still binds through its flow table entry only, because the vendor
+call bound it before that entry existed. A routed entry gets the
+PPPoE bit and the session of its frame, and the frame decides the
+VLAN layer count. The DSCP and the collision check read the IP
+header behind a PPPoE header. The bind writes the session in full,
+because a reused entry holds the session of its last flow.
 
 Signed-off-by: Chad Monroe <chad@monroe.io>
 ---
- drivers/net/ethernet/airoha/arht_dp_api.c |   10 ++++-
- drivers/net/ethernet/airoha/arht_ppe.c    |   39 ++++++++++++++++----
- 2 files changed, 42 insertions(+), 7 deletions(-)
+ drivers/net/ethernet/airoha/arht_dp_api.c |   10 +++
+ drivers/net/ethernet/airoha/arht_ppe.c    |   56 +++++++++++++++-----
+ 2 files changed, 52 insertions(+), 14 deletions(-)
 
---- a/drivers/net/ethernet/airoha/arht_dp_api.c
-+++ b/drivers/net/ethernet/airoha/arht_dp_api.c
-@@ -501,7 +501,15 @@ u8 get_dscp_from_skb(struct sk_buff *skb
- 	struct ipv6hdr *ip6h;
- 	u32 offset = 0;
- 	u8 tos = 0;
--	
-+
-+	/* On a PPPoE session the network header is the PPPoE header, and the
-+	 * IP header follows the PPP protocol field.
-+	 */
-+	if (skb_mac_header_was_set(skb) &&
-+	    skb_network_header(skb) - skb_mac_header(skb) >= ETH_HLEN &&
-+	    *(__be16 *)(skb_network_header(skb) - 2) == htons(ETH_P_PPP_SES))
-+		offset = PPPOE_SES_HLEN;
-+
- 	switch (type) {
- 		case PPE_PKT_TYPE_IPV4_ROUTE:
- 		case PPE_PKT_TYPE_IPV4_HNAPT:
 --- a/drivers/net/ethernet/airoha/arht_ppe.c
 +++ b/drivers/net/ethernet/airoha/arht_ppe.c
 @@ -16,6 +16,7 @@
@@ -175,3 +156,37 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  			switch (type) {
  				case PPE_PKT_TYPE_IPV4_ROUTE:
  				case PPE_PKT_TYPE_IPV4_HNAPT:
+@@ -2992,9 +3020,11 @@ void airoha_ppe_foe_flow_update_pon_offl
+ unlock:
+ 	spin_unlock_bh(&ppe_lock);
+ 
+-	/* This block is intentionally kept for symmetry but will not be
+-     * triggered since flow_table_enable is always 1 in this function. */
+-	if(flow_table_enable == 0)
++	/* The note at the top does not hold for a local-out flow: it has no
++	 * flow table entry, and only this handler binds it. The handler
++	 * binds only an unbound entry, so a bound flow is safe.
++	 */
++	if(flow_table_enable == 0 || airoha_is_local_out(skb))
+ 	{
+ 		airoha_ppe_tx_handler(skb, pinfo, 2);
+ 	}
+--- a/drivers/net/ethernet/airoha/arht_dp_api.c
++++ b/drivers/net/ethernet/airoha/arht_dp_api.c
+@@ -501,7 +501,15 @@ u8 get_dscp_from_skb(struct sk_buff *skb
+ 	struct ipv6hdr *ip6h;
+ 	u32 offset = 0;
+ 	u8 tos = 0;
+-	
++
++	/* On a PPPoE session the network header is the PPPoE header, and the
++	 * IP header follows the PPP protocol field.
++	 */
++	if (skb_mac_header_was_set(skb) &&
++	    skb_network_header(skb) - skb_mac_header(skb) >= ETH_HLEN &&
++	    *(__be16 *)(skb_network_header(skb) - 2) == htons(ETH_P_PPP_SES))
++		offset = PPPOE_SES_HLEN;
++
+ 	switch (type) {
+ 		case PPE_PKT_TYPE_IPV4_ROUTE:
+ 		case PPE_PKT_TYPE_IPV4_HNAPT:

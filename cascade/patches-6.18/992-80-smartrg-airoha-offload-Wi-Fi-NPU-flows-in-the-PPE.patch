@@ -1,0 +1,443 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Sun, 27 Sep 2026 11:07:29 -0700
+Subject: [PATCH] net: airoha: offload Wi-Fi NPU flows in the PPE
+
+A flow to a Wi-Fi station behind the NPU never bound in the PPE.
+The driver waits for the transmit path to complete an entry, and no
+QDMA transmit runs for a frame that the NPU sends. A Wi-Fi flow
+without a flowtable rule had no bind path, and no event removed a
+Wi-Fi flow when its interface went away.
+
+A flow to or from a Wi-Fi station now binds, with or without a
+flowtable rule. mt76 reports each frame that it hands to the NPU
+through a new PPE device operation, and the receive operation takes
+the CPU reason. Both change the public header, so mt76 must carry
+the matching change. The DSCP of a Wi-Fi entry holds 6 bits, because
+the NPU selects the WMM queue from it. When a Wi-Fi interface goes
+down or away, the driver deletes the conntrack entries of all routed
+Wi-Fi flows.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/airoha_eth.c          |    2 
+ drivers/net/ethernet/airoha/airoha_eth.h          |   11 -
+ drivers/net/ethernet/airoha/airoha_function.h     |    4 
+ drivers/net/ethernet/airoha/airoha_ppe.c          |   21 +++
+ drivers/net/ethernet/airoha/arht_dp_api.c         |   35 ++++-
+ drivers/net/ethernet/airoha/arht_dp_api_debugfs.c |    1 
+ drivers/net/ethernet/airoha/arht_ppe.c            |   72 +++++++++++-
+ include/linux/soc/airoha/airoha_offload.h         |   35 +++++
+ 8 files changed, 152 insertions(+), 29 deletions(-)
+
+--- a/drivers/net/ethernet/airoha/airoha_ppe.c
++++ b/drivers/net/ethernet/airoha/airoha_ppe.c
+@@ -369,9 +369,13 @@ static int airoha_ppe_foe_entry_prepare(
+ 
+ 		if (!airoha_ppe_get_wdma_info(netdev, data->eth.h_dest,
+ 					      &info)) {
++			/* NPU expects the 6-bit DSCP for CDM4 egress, unlike
++			 * the GDM path which stores the full TOS byte.
++			 */
+ 			val |= FIELD_PREP(AIROHA_FOE_IB2_NBQ, info.idx) |
+ 			       FIELD_PREP(AIROHA_FOE_IB2_PSE_PORT,
+-					  FE_PSE_PORT_CDM4);
++					  FE_PSE_PORT_CDM4) |
++			       FIELD_PREP(AIROHA_FOE_IB2_DSCP, dsfield >> 2);
+ 			qdata |= FIELD_PREP(AIROHA_FOE_ACTDP, info.bss);
+ 			wlan_etype = FIELD_PREP(AIROHA_FOE_MAC_WDMA_BAND,
+ 						info.idx) |
+@@ -957,6 +961,9 @@ static void airoha_ppe_foe_insert_entry(
+ 		if (!airoha_ppe_foe_compare_entry(e, hwe))
+ 			continue;
+ 
++		if (rx_wlan)
++			e->ingress_dev_idx = WIFI_DEV;
++
+ 		/* SmartRG tx_modified gate: only commit once the TX path has
+ 		 * populated the egress-side fields for this flow direction.
+ 		 */
+@@ -1547,12 +1554,21 @@ int airoha_ppe_setup_tc_block_cb(struct
+ }
+ 
+ void airoha_ppe_check_skb(struct airoha_ppe_dev *dev, struct sk_buff *skb,
+-			  u16 hash, bool rx_wlan)
++			  u16 hash, u16 reason, bool rx_wlan)
+ {
+ 	struct airoha_ppe *ppe = dev->priv;
+ 	u32 ppe_hash_mask = airoha_ppe_get_total_num_entries(ppe) - 1;
+ 	u16 now, diff;
+ 
++	/* The QDMA TX paths read the CPU reason back from skb->hash; the eth
++	 * RX path stores it itself in airoha_get_entry_bind().
++	 */
++	if (rx_wlan)
++		arht_ppe_wlan_rx_reason(skb, reason);
++
++	if (reason != PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED)
++		return;
++
+ 	if (hash > ppe_hash_mask)
+ 		return;
+ 
+@@ -1655,6 +1671,7 @@ int airoha_ppe_init(struct airoha_eth *e
+ 
+ 	ppe->dev.ops.setup_tc_block_cb = airoha_ppe_setup_tc_block_cb;
+ 	ppe->dev.ops.check_skb = airoha_ppe_check_skb;
++	ppe->dev.ops.check_tx_skb = arht_ppe_check_tx_skb;
+ 	ppe->dev.priv = ppe;
+ 	ppe->eth = eth;
+ 	eth->ppe = ppe;
+--- a/drivers/net/ethernet/airoha/arht_ppe.c
++++ b/drivers/net/ethernet/airoha/arht_ppe.c
+@@ -3361,7 +3361,7 @@ void npu_get_entry_bind(struct sk_buff *
+ 		struct airoha_flow_table_entry *flow_e = airoha_flow_table_entry_get_by_hash(glb_eth->ppe, hash);
+ 		if(flow_e)
+ 			flow_e->ingress_dev_idx = WIFI_DEV;			
+-		airoha_ppe_check_skb(&glb_eth->ppe->dev, skb, hash, false);
++		airoha_ppe_check_skb(&glb_eth->ppe->dev, skb, hash, reason, false);
+ 	}
+ }
+ 
+@@ -3535,6 +3535,32 @@ unlock:
+ 	}
+ }
+ 
++void arht_ppe_wlan_rx_reason(struct sk_buff *skb, u32 reason)
++{
++	set_entry_cpu_reason(skb, reason);
++}
++
++void arht_ppe_check_tx_skb(struct airoha_ppe_dev *dev, struct sk_buff *skb,
++			   const struct airoha_wdma_info *info)
++{
++	struct airoha_ppe *ppe = dev->priv;
++	struct port_info pinfo = {
++		.magic = FOE_MAGIC_WLAN,
++		.tsid = 0x7f,
++		.nbq = info->idx,
++		.udf = info->bss,
++		.stag = FIELD_PREP(AIROHA_FOE_MAC_WDMA_WCID, info->wcid) |
++			FIELD_PREP(AIROHA_FOE_MAC_WDMA_BAND, info->idx) |
++			FIELD_PREP(AIROHA_FOE_MAC_WDMA_QOS, info->tid),
++	};
++
++	if (!arht_hook_get_crsn ||
++	    arht_hook_get_crsn(skb) != PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED)
++		return;
++
++	airoha_ppe_foe_flow_update_wifi_npu_offload(ppe, skb, &pinfo);
++}
++
+ struct airoha_flow_table_entry *airoha_flow_table_entry_get_by_hash(struct airoha_ppe *ppe, u32 hash)
+ {
+ 	struct airoha_flow_table_entry *e;
+@@ -3589,6 +3615,26 @@ int __airoha_ppe_foe_commit_entry(struct
+ 	return ret;
+ }
+ 
++/* Detect wifi egress from the prepared FOE entry itself: the wdma branch of
++ * airoha_ppe_foe_entry_prepare() selects FE_PSE_PORT_CDM4. Name-based checks
++ * (airoha_ppe_is_wifi_dev) only match the MTK proprietary driver, and the
++ * flow rule may carry the bridge netdev rather than the wlan vif.
++ */
++static bool arht_foe_entry_is_wifi(struct airoha_foe_entry *hwe)
++{
++	int type = FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, hwe->ib1);
++	u32 ib2;
++
++	if (type == PPE_PKT_TYPE_BRIDGE)
++		ib2 = hwe->bridge.ib2;
++	else if (type >= PPE_PKT_TYPE_IPV6_ROUTE_3T)
++		ib2 = hwe->ipv6.ib2;
++	else
++		ib2 = hwe->ipv4.ib2;
++
++	return FIELD_GET(AIROHA_FOE_IB2_PSE_PORT, ib2) == FE_PSE_PORT_CDM4;
++}
++
+ void airoha_set_flow_destination(struct net_device *dev, struct airoha_flow_table_entry *e)
+ {
+         if(!dev || !e){
+@@ -3600,13 +3646,23 @@ void airoha_set_flow_destination(struct
+                 AIROHA_LOG(AIROHA_DEBUG_LEVEL_ERR, "destination set to PON\n");
+                 e->e_magic = PON;
+         }
+-		
++
+ 		if(airoha_get_lan_id(dev))
+ 		{
+ 			AIROHA_LOG(AIROHA_DEBUG_LEVEL_ERR, "destination set to ETH\n");
+             e->e_magic = airoha_get_lan_id(dev);
+ 		}
+ 
++        if(arht_foe_entry_is_wifi(&e->data)){
++                AIROHA_LOG(AIROHA_DEBUG_LEVEL_ERR, "destination set to WIFI\n");
++                e->e_magic = WIFI;
++                /* mt76 NPU egress is fully described at rule-replace time via
++                 * dev_fill_forward_path(); no QDMA TX pass ever runs for wifi
++                 * to set tx_modified, so grant commit-eligibility here.
++                 */
++                e->tx_modified = true;
++        }
++
+         return;
+ }
+ 
+@@ -3944,9 +4000,9 @@ void arht_modified_ppe_entry(struct airo
+ 		return;
+ 	}
+ 
+-	if (airoha_ppe_is_wifi_dev(netdev)) {
++	if (airoha_ppe_is_wifi_dev(netdev) || arht_foe_entry_is_wifi(hwe)) {
+ 	    airoha_set_ppe_mac(hwe, netdev, data->eth.h_source, data->eth.h_dest, data->pppoe.sid);
+-	    return; 
++	    return;
+ 	}
+ 
+ 	struct airoha_gdm_dev *dev = airoha_ppe_get_gdm_dev(glb_eth, netdev);
+@@ -4274,6 +4330,14 @@ static int airoha_ppe_netdev_event(struc
+ 	switch (event) {
+ 	case NETDEV_UNREGISTER:
+ 		airoha_ppe_clean_entry_by_landev(dev);
++		fallthrough;
++	case NETDEV_DOWN:
++		/* mac80211 netdevs (AP vif down, AP_VLAN removal on STA
++		 * disconnect) never traverse the QDMA TX paths that retire
++		 * eth flows, so flush wifi flows here.
++		 */
++		if (dev->ieee80211_ptr && glb_eth)
++			airoha_flow_table_entries_wifi(&glb_eth->flow_table);
+ 		break;
+ 	default:
+ 		break;
+--- a/drivers/net/ethernet/airoha/airoha_eth.c
++++ b/drivers/net/ethernet/airoha/airoha_eth.c
+@@ -980,7 +980,7 @@ static int airoha_qdma_rx_process(struct
+ 			reason = FIELD_GET(AIROHA_RXD4_PPE_CPU_REASON, msg1);
+ 			if (reason == PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED)
+ 				airoha_ppe_check_skb(&eth->ppe->dev, q->skb, hash,
+-				false);
++				reason, false);
+ 			napi_gro_receive(&q->napi, q->skb);
+ 		}
+ 		q->skb = NULL;
+--- a/drivers/net/ethernet/airoha/airoha_eth.h
++++ b/drivers/net/ethernet/airoha/airoha_eth.h
+@@ -591,6 +591,7 @@ enum magic {
+ 	LAN2 = 4,
+ 	LAN3 = 5,
+ 	LAN4 = 6,
++	WIFI = 7,
+ };
+ 
+ struct airoha_flow_table_entry {
+@@ -618,14 +619,6 @@ struct airoha_flow_table_entry {
+ 	struct airoha_foe_entry data;
+ };
+ 
+-struct airoha_wdma_info {
+-	u8 idx;
+-	u8 queue;
+-	u16 wcid;
+-	u8 bss;
+-	u8 tid;
+-};
+-
+ /* RX queue to IRQ mapping: BIT(q) in IRQ(n) */
+ #define RX_IRQ0_BANK_PIN_MASK			0xfb9f
+ #define RX_IRQ1_BANK_PIN_MASK			0x7fe00000
+@@ -931,7 +924,7 @@ void airoha_ppe_set_mtu(struct airoha_gd
+ void airoha_ppe_set_cpu_port(struct airoha_gdm_dev *dev, u8 ppe_id, u8 fport);
+ bool airoha_ppe_is_enabled(struct airoha_eth *eth, int index);
+ void airoha_ppe_check_skb(struct airoha_ppe_dev *dev, struct sk_buff *skb,
+-			  u16 hash, bool rx_wlan);
++			  u16 hash, u16 reason, bool rx_wlan);
+ int airoha_ppe_setup_tc_block_cb(struct airoha_ppe_dev *dev, void *type_data);
+ int airoha_ppe_init(struct airoha_eth *eth);
+ void airoha_ppe_deinit(struct airoha_eth *eth);
+--- a/drivers/net/ethernet/airoha/airoha_function.h
++++ b/drivers/net/ethernet/airoha/airoha_function.h
+@@ -20,6 +20,9 @@ extern void airoha_dp_api_qdma_meter_def
+ extern int airoha_dp_api_debugfs_init(struct airoha_eth *eth);
+ int airoha_receive_handler(struct airoha_queue *q, struct airoha_eth *eth, int len, int p);
+ int arht_tx_modified(struct airoha_flow_table_entry *e, u32 hash);
++void arht_ppe_wlan_rx_reason(struct sk_buff *skb, u32 reason);
++void arht_ppe_check_tx_skb(struct airoha_ppe_dev *dev, struct sk_buff *skb,
++			   const struct airoha_wdma_info *info);
+ int pon_fill_forward_path(struct net_device_path_ctx *ctx,
+ 				      struct net_device_path *path);
+ void arht_npu_retry_send_msg(struct airoha_npu *npu, int ret,
+@@ -45,6 +48,7 @@ extern int airoha_hsgmii_init(void);
+ extern void airoha_hsgmii_exit(void);
+ int airoha_get_lan_id(struct net_device *dev);
+ void airoha_flow_table_entries_lan(struct rhashtable *flow_table, struct net_device *dev);
++void airoha_flow_table_entries_wifi(struct rhashtable *flow_table);
+ int airoha_receive_hook(struct airoha_queue *q, struct airoha_qdma_desc *desc, 
+ 				int p, int len);
+ void arht_conntrack_get_cnt(u32 hash, struct airoha_foe_stats64 *stats);
+--- a/drivers/net/ethernet/airoha/arht_dp_api.c
++++ b/drivers/net/ethernet/airoha/arht_dp_api.c
+@@ -603,13 +603,12 @@ static void delete_conntrack_by_tuple(__
+ 	
+ }
+ 
+-void airoha_flow_table_entries_lan(struct rhashtable *flow_table, struct net_device *dev)
++static void airoha_flow_table_entries_flush(struct rhashtable *flow_table, int magic, u32 ingress_idx)
+ {
+     struct airoha_flow_table_entry *e = NULL;
+     struct rhashtable_iter iter = {0};
+     int ret = 0;
+-    int lan_idx = airoha_get_lan_id(dev);
+-    
++
+     rhashtable_walk_enter(flow_table, &iter);
+     ret = rhashtable_walk_start_check(&iter);
+     if (ret) {
+@@ -624,7 +623,7 @@ void airoha_flow_table_entries_lan(struc
+ 		{
+ 			break;
+ 		}
+-        if (lan_idx == e->e_magic || lan_idx == e->ingress_dev_idx) {
++        if (magic == e->e_magic || ingress_idx == e->ingress_dev_idx) {
+             int type = FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, e->data.ib1);
+ 			u32 state = FIELD_GET(AIROHA_FOE_IB1_BIND_STATE, e->data.ib1);
+ 			u8 is_udp = FIELD_GET(AIROHA_FOE_IB1_BIND_UDP, e->data.ib1);
+@@ -633,12 +632,12 @@ void airoha_flow_table_entries_lan(struc
+ 			if (state != AIROHA_FOE_STATE_BIND)
+ 				continue;
+ 
+-			AIROHA_LOG(AIROHA_DEBUG_LEVEL_ERR, "airoha_flow_table_entries_lan found flow entry: cookie=%lx ingress_dev_idx=%u, e->magic=%d and lan_idx=%d\n",
+-                   e->cookie, e->ingress_dev_idx, e->e_magic, lan_idx);
+-			
++			AIROHA_LOG(AIROHA_DEBUG_LEVEL_ERR, "%s found flow entry: cookie=%lx ingress_dev_idx=%u, e->magic=%d and magic=%d\n",
++                   __func__, e->cookie, e->ingress_dev_idx, e->e_magic, magic);
++
+ 			if (type == PPE_PKT_TYPE_IPV4_HNAPT || type == PPE_PKT_TYPE_IPV4_ROUTE) {
+                 struct airoha_foe_ipv4_tuple *tuple = &e->data.ipv4.orig_tuple;
+-				
++
+                 delete_conntrack_by_tuple(ntohl(tuple->src_ip), ntohl(tuple->dest_ip),
+                                          ntohs(tuple->src_port), ntohs(tuple->dest_port),l4proto);
+             } else if (type == PPE_PKT_TYPE_IPV4_DSLITE) {
+@@ -663,6 +662,18 @@ out:
+     rhashtable_walk_exit(&iter);
+ }
+ 
++void airoha_flow_table_entries_lan(struct rhashtable *flow_table, struct net_device *dev)
++{
++    int lan_idx = airoha_get_lan_id(dev);
++
++    airoha_flow_table_entries_flush(flow_table, lan_idx, lan_idx);
++}
++
++void airoha_flow_table_entries_wifi(struct rhashtable *flow_table)
++{
++    airoha_flow_table_entries_flush(flow_table, WIFI, WIFI_DEV);
++}
++
+ 
+ int airoha_is_pon_sfu_mode(void)
+ {
+@@ -1353,7 +1364,7 @@ static void airoha_get_entry_bind(u32 ms
+ 			if(airoha_get_lan_id(q->skb->dev)==ETH2)
+ 				flow_e->ingress_dev_idx = ETH2;
+ 		}
+-		airoha_ppe_check_skb(&eth->ppe->dev, q->skb, hash, false);
++		airoha_ppe_check_skb(&eth->ppe->dev, q->skb, hash, reason, false);
+ 		if(arht_xpon_igmp_sfu_enable_hook == NULL){
+ 			arht_ppe_multicast_handler(eth->ppe, q->skb);
+ 		}
+@@ -1641,12 +1652,18 @@ EXPORT_SYMBOL(qdma_wan_tx);
+ 
+ void arht_ppe_foe_flow_update_wifi_npu_offload(struct sk_buff *skb, struct port_info *pinfo)
+ {
++	if (!glb_eth)
++		return;
++
+ 	airoha_ppe_foe_flow_update_wifi_npu_offload(glb_eth->ppe, skb, pinfo);
+ }
+ EXPORT_SYMBOL(arht_ppe_foe_flow_update_wifi_npu_offload);
+ 
+ int arht_ppe_is_UNBIND_RATE_REACHED(struct sk_buff *skb)
+ {
++	if (!arht_hook_get_crsn)
++		return 0;
++
+ 	if (arht_hook_get_crsn(skb) == PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED)
+ 	{
+ 		return 1;
+--- a/drivers/net/ethernet/airoha/arht_dp_api_debugfs.c
++++ b/drivers/net/ethernet/airoha/arht_dp_api_debugfs.c
+@@ -439,6 +439,7 @@ static int airoha_ppe_debugfs_foe_flow_s
+ 		[LAN2] = "LAN2",
+ 		[LAN3] = "LAN3",
+ 		[LAN4] = "LAN4",
++		[WIFI] = "WIFI",
+ 	};
+ 
+ 	static const char *const ppe_type[] = {
+--- a/include/linux/soc/airoha/airoha_offload.h
++++ b/include/linux/soc/airoha/airoha_offload.h
+@@ -14,13 +14,24 @@ enum {
+ 	PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED = 0x0f,
+ };
+ 
++struct airoha_wdma_info {
++	u8 idx;
++	u8 queue;
++	u16 wcid;
++	u8 bss;
++	u8 tid;
++};
++
+ struct airoha_ppe_dev {
+ 	struct {
+ 		int (*setup_tc_block_cb)(struct airoha_ppe_dev *dev,
+ 					 void *type_data);
+ 		void (*check_skb)(struct airoha_ppe_dev *dev,
+ 				  struct sk_buff *skb, u16 hash,
+-				  bool rx_wlan);
++				  u16 reason, bool rx_wlan);
++		void (*check_tx_skb)(struct airoha_ppe_dev *dev,
++				     struct sk_buff *skb,
++				     const struct airoha_wdma_info *info);
+ 	} ops;
+ 
+ 	void *priv;
+@@ -38,9 +49,19 @@ static inline int airoha_ppe_dev_setup_t
+ 
+ static inline void airoha_ppe_dev_check_skb(struct airoha_ppe_dev *dev,
+ 					    struct sk_buff *skb,
+-					    u16 hash, bool rx_wlan)
++					    u16 hash, u16 reason, bool rx_wlan)
+ {
+-	dev->ops.check_skb(dev, skb, hash, rx_wlan);
++	dev->ops.check_skb(dev, skb, hash, reason, rx_wlan);
++}
++
++static inline void airoha_ppe_dev_check_tx_skb(struct airoha_ppe_dev *dev,
++					       struct sk_buff *skb,
++					       const struct airoha_wdma_info *info)
++{
++	if (!dev->ops.check_tx_skb)
++		return;
++
++	dev->ops.check_tx_skb(dev, skb, info);
+ }
+ #else
+ static inline struct airoha_ppe_dev *airoha_ppe_get_dev(struct device *dev)
+@@ -60,7 +81,13 @@ static inline int airoha_ppe_dev_setup_t
+ 
+ static inline void airoha_ppe_dev_check_skb(struct airoha_ppe_dev *dev,
+ 					    struct sk_buff *skb, u16 hash,
+-					    bool rx_wlan)
++					    u16 reason, bool rx_wlan)
++{
++}
++
++static inline void airoha_ppe_dev_check_tx_skb(struct airoha_ppe_dev *dev,
++					       struct sk_buff *skb,
++					       const struct airoha_wdma_info *info)
+ {
+ }
+ #endif

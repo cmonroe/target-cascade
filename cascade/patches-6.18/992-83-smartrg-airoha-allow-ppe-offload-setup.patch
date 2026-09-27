@@ -13,7 +13,7 @@ Signed-off-by: Hoang Viet Pham <hoang.pham@adtran.com>
 
 --- a/drivers/net/ethernet/airoha/airoha_ppe.c
 +++ b/drivers/net/ethernet/airoha/airoha_ppe.c
-@@ -1485,7 +1485,7 @@ static int airoha_ppe_wait_for_npu_init(
+@@ -1488,7 +1488,7 @@ static int airoha_ppe_wait_for_npu_init(
  	return err;
  }
  
@@ -22,7 +22,7 @@ Signed-off-by: Hoang Viet Pham <hoang.pham@adtran.com>
  {
  	struct airoha_npu *npu = airoha_ppe_npu_get(eth);
  	struct airoha_ppe *ppe = eth->ppe;
-@@ -1524,6 +1524,7 @@ error_npu_put:
+@@ -1527,6 +1527,7 @@ error_npu_put:
  
  	return err;
  }

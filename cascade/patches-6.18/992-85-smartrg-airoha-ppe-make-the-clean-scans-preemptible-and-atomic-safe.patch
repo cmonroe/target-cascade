@@ -1,36 +1,23 @@
 From: Chad Monroe <chad@monroe.io>
-Date: Mon, 14 Sep 2026 16:30:00 -0700
-Subject: net: airoha: ppe: make full-table FOE scans preemptible
+Date: Sun, 27 Sep 2026 11:07:51 -0700
+Subject: [PATCH] net: airoha: ppe: make the clean scans preemptible and atomic-safe
 
-Every clean_entry_by_* request runs on clean_entry_wq (WQ_UNBOUND,
-max_active 1) as a linear walk of airoha_ppe_get_total_num_entries()
-entries, 32768 on the AN7581, calling airoha_ppe_foe_get_entry() per
-entry; the 16384 SRAM entries each cost a REG_PPE_RAM_CTRL request, an
-ACK poll and 20 register reads. Measured 55 to 61 ms per work item with
-no scheduling point inside. arht_wifi_lo expires a session after 1 s of
-transmit idle and queues a CLEAN_BY_PORT scan for each, so an iperf3 run
-queued 316 items in 15 s, and on this PREEMPT_NONE kernel a SCHED_FIFO
-voice engine thread on the same CPU waited the whole item every time
-(wake-to-run 54 ms, then a playback underrun and an xrun).
+A clean request walks the whole PPE table with no scheduling point,
+so a real-time task on the same CPU waited for the whole walk. A
+timer callback also queues such a request, and the allocation of
+the request could sleep there.
 
-Add arht_ppe_scan_relax(): cond_resched() every 128 entries, about
-0.45 ms at 3.5 us per SRAM entry, called with ppe_lock released, at the
-top of the loop body of every process-context scanner: by_gemport,
-by_channel, by_fport_and_channel, by_mac_common, by_type (which covers
-clean_multicast_entry), by_ip, by_port and by_landev. by_landev is also
-reached from the netdev notifier under RTNL, which is process context.
-reuse_shrink_table() runs under shnk_tbl_lock and
-airoha_ppe_clean_sram_table() holds ppe_lock across its loop; both stay
-as they are, the latter reached only by the blapi clean-table command.
-
-The scan still costs the same CPU time; it no longer holds the CPU. A
-single-entry delete at session expiry, by the FOE index wifi_lo already
-records for the ingress direction plus the egress index it does not,
-would remove the scan; it is not safe alone because PPE ageing is never
-enabled and an undeleted entry leaks its slot.
+Each clean scan that holds no lock across its loop now gives the
+scheduler a turn at a fixed interval. The two scans that hold a lock
+across the loop stay as they are. A request always takes atomic
+memory, because a kernel without preemption cannot detect a caller
+that holds a spinlock.
 
 Signed-off-by: Chad Monroe <chad@monroe.io>
 ---
+ drivers/net/ethernet/airoha/arht_ppe.c |   38 +++++++++++++++++++++--
+ 1 file changed, 36 insertions(+), 2 deletions(-)
+
 --- a/drivers/net/ethernet/airoha/arht_ppe.c
 +++ b/drivers/net/ethernet/airoha/arht_ppe.c
 @@ -14,6 +14,7 @@
@@ -132,3 +119,26 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		foe_entry = airoha_ppe_foe_get_entry(glb_eth->ppe, idx);
  		if (foe_entry == NULL) {
  			continue;
+@@ -3125,7 +3154,12 @@ static int queue_clean_entry_work(enum c
+ {
+     struct clean_entry_work *cew;
+ 
+-    cew = kzalloc(sizeof(*cew), GFP_KERNEL);
++    /*
++     * The ra_sw_nat_hook_clean_entry_by_* pointers are exported and one
++     * is called from a timer callback (wifi_lo_timeout), so this runs in
++     * atomic context; both objects are tiny.
++     */
++    cew = kzalloc(sizeof(*cew), GFP_ATOMIC);
+     if (!cew)
+         return -ENOMEM;
+ 
+@@ -3133,7 +3167,7 @@ static int queue_clean_entry_work(enum c
+     cew->type = type;
+ 
+     if (data_len > 0) {
+-        cew->data = kmemdup(data, data_len, GFP_KERNEL);
++        cew->data = kmemdup(data, data_len, GFP_ATOMIC);
+         if (!cew->data) {
+             kfree(cew);
+             return -ENOMEM;
