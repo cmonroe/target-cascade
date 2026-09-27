@@ -10,20 +10,21 @@ fastpath dropped each frame of an entry without a session.
 
 A Wi-Fi flow to an address on a VLAN device of a bridge now takes
 the fastpath. A flow has at most one session, and a session binds
-only the entry that it holds. The end of a session releases its
-entry. The fastpath drops a frame without a session and releases
-its entry, so later frames take the normal receive path. A frame
-keeps its IP length, because the ethernet driver sets the length of
-an LRO aggregate. The entry skips the NPU flow counter, as upstream
-does for Wi-Fi receive; conntrack counts the flow.
+only the entry of the packet that starts the bind. The end of a
+session releases its entry. The fastpath drops a frame without a
+session and releases its entry, so later frames take the normal
+receive path. A frame keeps its IP length, because the ethernet
+driver sets the length of an LRO aggregate. The entry skips the NPU
+flow counter, as upstream does for Wi-Fi receive; conntrack counts
+the flow.
 
 Signed-off-by: Chad Monroe <chad@monroe.io>
 ---
- drivers/net/ethernet/airoha/arht_ppe.c     |   52 +++++++++
+ drivers/net/ethernet/airoha/arht_ppe.c     |   52 ++++++++
  drivers/net/ethernet/airoha/arht_ppe.h     |    2 
- drivers/net/ethernet/airoha/arht_wifi_lo.c |  105 +++++++++++++------
+ drivers/net/ethernet/airoha/arht_wifi_lo.c |  110 +++++++++++++------
  drivers/net/ethernet/airoha/arht_wifi_lo.h |    2 
- 4 files changed, 127 insertions(+), 34 deletions(-)
+ 4 files changed, 132 insertions(+), 34 deletions(-)
 
 --- a/drivers/net/ethernet/airoha/arht_ppe.c
 +++ b/drivers/net/ethernet/airoha/arht_ppe.c
@@ -166,7 +167,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	if (f) {
  		const struct net_bridge_port *dst = READ_ONCE(f->dst);
  
-@@ -578,16 +600,21 @@ static int wifi_lo_prepare_gro(struct sk
+@@ -578,16 +600,24 @@ static int wifi_lo_prepare_gro(struct sk
  	struct wifi_lo *lo;
  	struct net_device *dev;
  	struct sock *sk;
@@ -175,6 +176,9 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	if (unlikely(!skb_mac_header_was_set(skb)))
  		goto free;
  
++	if (!skb->l4_hash || skb->sw_hash)
++		goto free;
++
 +	hash = FOE_ENTRY_NUM(skb);
 +
  	/* Single RCU section covers the table lookup, the skip_copy set,
@@ -189,7 +193,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		goto free;
  	}
  
-@@ -615,24 +642,6 @@ static int wifi_lo_prepare_gro(struct sk
+@@ -615,24 +645,6 @@ static int wifi_lo_prepare_gro(struct sk
  
  	skb->ip_summed = CHECKSUM_UNNECESSARY;
  
@@ -214,7 +218,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	return 1;
  
  free:
-@@ -708,6 +717,7 @@ static void wifi_lo_timeout(struct timer
+@@ -708,6 +720,7 @@ static void wifi_lo_timeout(struct timer
  	struct dst_entry *dst_to_release = NULL;
  	struct sock *sk_to_release = NULL;
  	bool difc_active = false;
@@ -222,7 +226,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	spin_lock_bh(&wifi_lo_lock);
  	if (time_before(jiffies, e->last_tx + WIFI_LO_EXPIRE_TIME)) {
-@@ -749,10 +759,18 @@ static void wifi_lo_timeout(struct timer
+@@ -749,10 +762,18 @@ static void wifi_lo_timeout(struct timer
  
  	clear_bit(WIFI_LO_F_IS_WIFI, &e->flags);
  	clear_bit(WIFI_LO_F_VALID,   &e->flags);
@@ -241,7 +245,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	if (atomic_dec_return(&wifi_lo_active_num) == 0)
  		schedule_work(&wifi_lo_active_sync);	/* flip key -> off */
  
-@@ -797,6 +815,12 @@ static void wifi_lo_add_ety(struct sk_bu
+@@ -797,6 +818,12 @@ static void wifi_lo_add_ety(struct sk_bu
  		dst_hold(dst);
  
  	spin_lock_bh(&wifi_lo_lock);
@@ -254,7 +258,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	for (i = 0; i < WIFI_LO_MAX_NUM; i++) {
  		lo = &wifi_lo_ety[i];
  		/* Skip both live slots and slots whose previous occupant is
-@@ -834,6 +858,7 @@ static void wifi_lo_add_ety(struct sk_bu
+@@ -834,6 +861,7 @@ static void wifi_lo_add_ety(struct sk_bu
  		added = true;
  		break;
  	}
@@ -262,7 +266,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	spin_unlock_bh(&wifi_lo_lock);
  
  	if (!added) {
-@@ -891,14 +916,16 @@ static unsigned int wifi_lo_nf_hook_loca
+@@ -891,14 +919,16 @@ static unsigned int wifi_lo_nf_hook_loca
  
  	/*
  	 * Resolve the true ingress netdev for this packet:
@@ -284,7 +288,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  		if (dev)
  			wifi_lo_publish_ingress_dev(lo, dev);
-@@ -911,12 +938,22 @@ static unsigned int wifi_lo_nf_hook_loca
+@@ -911,12 +941,24 @@ static unsigned int wifi_lo_nf_hook_loca
  		return NF_ACCEPT;
  	}
  
@@ -296,7 +300,9 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 +	if (!hash || !glb_eth || hash >= glb_eth->soc->ppe_sram_etry_num)
 +		goto out;
 +
-+	if (READ_ONCE(lo->hash) == 0)
++	if (READ_ONCE(lo->hash) == 0 &&
++	    (skb->hash & PPE_CPU_MASK) >> PPE_CPU_REASON_BIT ==
++	    PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED)
  		wifi_lo_hash_publish(lo, hash);
  
 +	if (READ_ONCE(lo->hash) != hash)
@@ -308,7 +314,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	rcu_read_unlock();
  
  	return NF_ACCEPT;
-@@ -978,6 +1015,8 @@ static unsigned int wifi_lo_nf_hook_loca
+@@ -978,6 +1020,8 @@ static unsigned int wifi_lo_nf_hook_loca
  			return NF_STOLEN;
  		}
  		rcu_read_unlock();
