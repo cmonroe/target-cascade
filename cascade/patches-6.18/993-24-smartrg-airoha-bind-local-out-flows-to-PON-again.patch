@@ -1,0 +1,36 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Sat, 26 Sep 2026 18:11:11 -0700
+Subject: [PATCH] net: airoha: bind local-out flows to PON again
+
+The vendor 6.18 feed stopped the PON transmit path from calling the
+transmit bind handler, because that call bound forwarded flows before
+their flow table entry existed. The handler is also the only place
+that binds a local-out flow. Each local-out packet to PON therefore
+went back to the CPU through the metered ring, and an upload from the
+router over PON stayed at the rate of that meter.
+
+The PON transmit path calls the handler again for local-out packets.
+Forwarded flows keep the vendor behavior.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/arht_ppe.c |    8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+--- a/drivers/net/ethernet/airoha/arht_ppe.c
++++ b/drivers/net/ethernet/airoha/arht_ppe.c
+@@ -2992,9 +2992,11 @@ void airoha_ppe_foe_flow_update_pon_offl
+ unlock:
+ 	spin_unlock_bh(&ppe_lock);
+ 
+-	/* This block is intentionally kept for symmetry but will not be
+-     * triggered since flow_table_enable is always 1 in this function. */
+-	if(flow_table_enable == 0)
++	/* The note at the top does not hold for a local-out flow: it has no
++	 * flow table entry, and only this handler binds it. The handler
++	 * binds only an unbound entry, so a bound flow is safe.
++	 */
++	if(flow_table_enable == 0 || airoha_is_local_out(skb))
+ 	{
+ 		airoha_ppe_tx_handler(skb, pinfo, 2);
+ 	}
