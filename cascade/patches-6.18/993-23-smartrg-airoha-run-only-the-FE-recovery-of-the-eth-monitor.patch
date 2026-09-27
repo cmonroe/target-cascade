@@ -1,0 +1,142 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Sat, 26 Sep 2026 18:10:49 -0700
+Subject: [PATCH] net: airoha: run only the FE recovery of the eth monitor
+
+The ethernet monitor finds the switch ports by the names lan1 to lan4,
+but on these boards the device tree labels name the ports, and lan1
+is the 10G GDM4 port. Its GDM4 reset also ran after any change of a
+counter that each stats read clears, and nothing stopped the monitor
+on a remove or a failed probe.
+
+The monitor now skips every port and runs only the GDM4 recovery. The
+reset needs overflow drops in each poll for one second, counted with
+the drops that stats reads collect, and runs under RTNL. A failed
+probe and a remove stop the monitor before they release the netdevs.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/airoha_eth.c        |    3 
+ drivers/net/ethernet/airoha/arht_dp_api.c       |   62 ++++++++++++--
+ drivers/net/ethernet/airoha/en7581/soc_en7581.c |    8 -
+ 3 files changed, 62 insertions(+), 11 deletions(-)
+
+--- a/drivers/net/ethernet/airoha/airoha_eth.c
++++ b/drivers/net/ethernet/airoha/airoha_eth.c
+@@ -4368,6 +4368,8 @@ static int airoha_probe(struct platform_
+ 	return 0;
+ 
+ error_napi_stop:
++	/* The monitor uses the netdevs and QDMA that the next steps release. */
++	airoha_eth_monitor_workqueue_exit();
+ 	for (i = 0; i < ARRAY_SIZE(eth->qdma); i++)
+ 		airoha_qdma_stop_napi(&eth->qdma[i]);
+ 
+@@ -4407,6 +4409,7 @@ static void airoha_remove(struct platfor
+ 	struct airoha_eth *eth = platform_get_drvdata(pdev);
+ 	int i;
+ 
++	airoha_eth_monitor_workqueue_exit();
+ 	for (i = 0; i < ARRAY_SIZE(eth->qdma); i++)
+ 		airoha_qdma_stop_napi(&eth->qdma[i]);
+ 
+--- a/drivers/net/ethernet/airoha/arht_dp_api.c
++++ b/drivers/net/ethernet/airoha/arht_dp_api.c
+@@ -3238,19 +3238,65 @@ static void airoha_eth_monitor_serdes_pr
+ 	rtnl_unlock();
+ }
+ 
++/* The monitor polls every 125 ms, so 8 polls are one second of drops. */
++#define GDM4_OVERFLOW_RESET_POLLS	8
++
++static u64 gdm4_overflow_drops_last;
++static unsigned int gdm4_overflow_polls;
++
++/* A stats read adds the MIB counter to the netdev stats and clears it,
++ * both under the port lock, so the sum of the two never goes down.
++ */
++static u64 airoha_gdm4_overflow_drops(struct airoha_eth *eth)
++{
++	struct airoha_gdm_port *port = NULL;
++	struct airoha_gdm_dev *dev = NULL;
++	u64 drops;
++	int i;
++
++	for (i = 0; i < ARRAY_SIZE(eth->ports); i++) {
++		if (eth->ports[i] && eth->ports[i]->id == AIROHA_GDM4_IDX)
++			port = eth->ports[i];
++	}
++	if (!port)
++		return 0;
++
++	for (i = 0; i < ARRAY_SIZE(port->devs) && !dev; i++)
++		dev = port->devs[i];
++	if (!dev)
++		return 0;
++
++	spin_lock(&port->lock);
++	drops = dev->stats.rx_over_errors +
++		airoha_fe_rr(eth, REG_FE_GDM_RX_OVERFLOW_DROP_CNT(port->id));
++	spin_unlock(&port->lock);
++
++	return drops;
++}
++
+ void airoha_eth_monitor(struct work_struct *work)
+ {
+ 	int p, i;
+-	static u32 gdm4_overflow_drop_cnt_last = 0;
+-	u32 gdm4_overflow_drop_cnt_cur;
++	u64 gdm4_overflow_drops;
+ 	
+ 	if (glb_eth && glb_eth->fe_regs) {
+-		gdm4_overflow_drop_cnt_cur =
+-			airoha_fe_rr(glb_eth, REG_FE_GDM_RX_OVERFLOW_DROP_CNT(4)); 
+-		if (gdm4_overflow_drop_cnt_cur != gdm4_overflow_drop_cnt_last) {
++		gdm4_overflow_drops = airoha_gdm4_overflow_drops(glb_eth);
++		gdm4_overflow_polls =
++			gdm4_overflow_drops > gdm4_overflow_drops_last ?
++			gdm4_overflow_polls + 1 : 0;
++		gdm4_overflow_drops_last = gdm4_overflow_drops;
++
++		/* Reset only when GDM4 drops in each poll for a second, not
++		 * after one burst.
++		 */
++		if (gdm4_overflow_polls >= GDM4_OVERFLOW_RESET_POLLS) {
++			gdm4_overflow_polls = 0;
++			/* RTNL keeps an interface open or stop out of the reset. */
++			rtnl_lock();
+ 			airoha_fe_do_core_reset(glb_eth);
+-			gdm4_overflow_drop_cnt_last =
+-				airoha_fe_rr(glb_eth, REG_FE_GDM_RX_OVERFLOW_DROP_CNT(4));
++			rtnl_unlock();
++			gdm4_overflow_drops_last =
++				airoha_gdm4_overflow_drops(glb_eth);
+ 		}
+ 	}
+ 	//fe_oq_stat_monitor();
+@@ -3295,6 +3341,8 @@ void airoha_eth_monitor_workqueue_init(v
+ 		if(!eth->work_started)
+ 		{
+ 			eth->work_started = true;
++			gdm4_overflow_drops_last = 0;
++			gdm4_overflow_polls = 0;
+ 			printk("[AIROHA_ETH] ETH State Monitor Active \n");
+ 			INIT_DELAYED_WORK(&airoha_eth_monitor_workqueue, airoha_eth_monitor);
+ 			schedule_delayed_work(&airoha_eth_monitor_workqueue,msecs_to_jiffies(50000));
+--- a/drivers/net/ethernet/airoha/en7581/soc_en7581.c
++++ b/drivers/net/ethernet/airoha/en7581/soc_en7581.c
+@@ -16,10 +16,10 @@ unsigned int en7581_get_fe_fport(struct
+ 
+ int en7581_support_eth_monitor(int p)
+ {
+-	/*gdm2 and gdm3 not detect, skip*/
+-	if(p == AIROHA_PORTS_GDM2_ID || p == AIROHA_PORTS_GDM3_ID)
+-		return 0;
+-	return 1;
++	/* The per-port link handling does not fit the port layout of these
++	 * boards, so the monitor runs only its FE recovery.
++	 */
++	return 0;
+ }
+ 
+ void an7581_qdma_regs_setting(struct airoha_qdma *qdma, struct airoha_eth *eth)

@@ -60,7 +60,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  int g_pon_serdes_eth = 0;
  
  static const struct ring_dscp_map ring_dscp_table[] = {
-@@ -267,6 +277,9 @@ int arht_extra_probe(struct airoha_eth *
+@@ -268,6 +278,9 @@ int arht_extra_probe(struct airoha_eth *
  	arht_read_dscp_num_from_dts(eth);
  	airoha_eth_qdma_fastpath_default_cfg(eth);
  	glb_eth = eth;
