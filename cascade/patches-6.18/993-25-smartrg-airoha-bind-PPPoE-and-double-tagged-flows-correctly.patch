@@ -1,0 +1,177 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Sat, 26 Sep 2026 18:42:47 -0700
+Subject: [PATCH] net: airoha: bind PPPoE and double-tagged flows correctly
+
+A local-out flow on a PPPoE uplink was bound without the PPPoE header,
+so the PPE would send frames that the access concentrator drops. The
+DSCP of each PPPoE flow came from the PPPoE header, not from the IP
+header, and the collision check compared no address behind a PPPoE
+header. On a PON uplink with two tags, the transmit path added one
+VLAN layer to the two that the flow rule set.
+
+The bind now sets the PPPoE bit and the session of the frame for a
+routed entry, and the DSCP and the collision check read the IP header
+behind a PPPoE header. The PON transmit path sets the VLAN layer
+count, the outer TPID and the PPPoE bit from the frame, as the bind
+does. The session is written in full, because a reused entry still
+holds the session of its last flow.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/arht_dp_api.c |   10 ++++-
+ drivers/net/ethernet/airoha/arht_ppe.c    |   39 ++++++++++++++++----
+ 2 files changed, 42 insertions(+), 7 deletions(-)
+
+--- a/drivers/net/ethernet/airoha/arht_dp_api.c
++++ b/drivers/net/ethernet/airoha/arht_dp_api.c
+@@ -501,7 +501,15 @@ u8 get_dscp_from_skb(struct sk_buff *skb
+ 	struct ipv6hdr *ip6h;
+ 	u32 offset = 0;
+ 	u8 tos = 0;
+-	
++
++	/* On a PPPoE session the network header is the PPPoE header, and the
++	 * IP header follows the PPP protocol field.
++	 */
++	if (skb_mac_header_was_set(skb) &&
++	    skb_network_header(skb) - skb_mac_header(skb) >= ETH_HLEN &&
++	    *(__be16 *)(skb_network_header(skb) - 2) == htons(ETH_P_PPP_SES))
++		offset = PPPOE_SES_HLEN;
++
+ 	switch (type) {
+ 		case PPE_PKT_TYPE_IPV4_ROUTE:
+ 		case PPE_PKT_TYPE_IPV4_HNAPT:
+--- a/drivers/net/ethernet/airoha/arht_ppe.c
++++ b/drivers/net/ethernet/airoha/arht_ppe.c
+@@ -16,6 +16,7 @@
+ #include <linux/workqueue.h>
+ #include <linux/sched.h>
+ #include <linux/notifier.h>
++#include <linux/ppp_defs.h>
+ 
+ #include "airoha_eth.h"
+ #include "airoha_regs.h"
+@@ -288,14 +289,26 @@ static int packet_hash_collision_check(s
+ 	struct ipv6hdr *iph6 = NULL;
+ 	__be16 etype = skb->protocol;
+ 	struct in6_addr foe_sip = {0}, foe_dip = {0};
++	u8 *l3 = skb->data + 12 + vlan_num*4 + 2;
++	__be16 ppp_proto;
+ 
+ 	//skip vlan
+ 	etype = *(unsigned short*)(skb->data + 12 + vlan_num*4);
+ 
++	if (etype == htons(ETH_P_PPP_SES))
++	{
++		ppp_proto = *(__be16 *)(l3 + PPPOE_SES_HLEN - 2);
++		l3 += PPPOE_SES_HLEN;
++		if (ppp_proto == htons(PPP_IP))
++			etype = htons(ETH_P_IP);
++		else if (ppp_proto == htons(PPP_IPV6))
++			etype = htons(ETH_P_IPV6);
++	}
++
+ 	if (etype == htons(ETH_P_IP))
+ 	{
+ 		//check sip/dip
+-		iph = (struct iphdr*)(skb->data + 12 + vlan_num*4 + 2);
++		iph = (struct iphdr*)l3;
+ 		if(IS_IPV4_GRP(foe_entry))
+ 		{
+ 			if((ntohl(iph->saddr) != foe_entry->ipv4.orig_tuple.src_ip) || (ntohl(iph->daddr) != foe_entry->ipv4.orig_tuple.dest_ip))
+@@ -308,7 +321,7 @@ static int packet_hash_collision_check(s
+ 	else if (etype == htons(ETH_P_IPV6))
+ 	{
+ 		// IPv6 packet
+-		iph6 = (struct ipv6hdr*)(skb->data + 12 + vlan_num*4 + 2);
++		iph6 = (struct ipv6hdr*)l3;
+ 		if (IS_IPV6_GRP(foe_entry))
+ 		{
+ 			// Check IPv6 5-tuple route
+@@ -946,8 +959,7 @@ int airoha_set_ppe_mac(struct airoha_foe
+ 		mac_info = (struct airoha_foe_mac_info *)l2;
+ 		l2->src_mac_hi = get_unaligned_be32(src_mac);
+ 		mac_info->src_mac_lo = get_unaligned_be16(src_mac + 4);
+-		if(pppid)
+-			mac_info->pppoe_id = pppid;
++		mac_info->pppoe_id = pppid;
+ 	} else {
+ 		if((dev != NULL) && (airoha_is_bridge_packet(dev,src_mac) == true)) {
+ 			set_ppe_entry_smac_index(foe_entry, PPE_PKT_TYPE_IPV6_ROUTE_5T, 0x10);
+@@ -961,8 +973,9 @@ int airoha_set_ppe_mac(struct airoha_foe
+ 				printk("smac: find and update shrink table failed!\n");
+ 			}
+ 		}
+-		if(pppid)
+-			l2->src_mac_hi |=  FIELD_PREP(AIROHA_FOE_MAC_PPPOE_ID, pppid);
++		/* A reused entry keeps the session of its last flow. */
++		l2->src_mac_hi &= ~AIROHA_FOE_MAC_PPPOE_ID;
++		l2->src_mac_hi |= FIELD_PREP(AIROHA_FOE_MAC_PPPOE_ID, pppid);
+ 		
+ 	}	
+ 	AIROHA_LOG(AIROHA_DEBUG_LEVEL_WARN, "%s:%d  type:%d / smac_id:%d\n",
+@@ -1181,6 +1194,8 @@ static bool arht_ppe_l4s_apply(struct ai
+ 	return true;
+ }
+ 
++static void airoha_ppe_foe_get_pppoe_info(struct sk_buff *skb, u16 vl, u16 *pppid);
++
+ static void airoha_ppe_general_bind(struct airoha_ppe *ppe, struct airoha_foe_entry *hwe,
+ 	struct sk_buff *skb, struct port_info *pinfo, u8 fport)
+ {
+@@ -1193,6 +1208,7 @@ static void airoha_ppe_general_bind(stru
+ 	u32 hash = FOE_ENTRY_NUM(skb);
+ 	int rx_wlan = 0;
+ 	struct net_device *ori_dev = NULL;
++	u16 pppid = 0;
+ 
+ 	if(FIELD_GET(AIROHA_FOE_IB1_BIND_STATE, hwe->ib1) == AIROHA_FOE_STATE_BIND)
+ 		return;
+@@ -1210,6 +1226,7 @@ static void airoha_ppe_general_bind(stru
+ 	    return;
+ 	}
+ 	airoha_ppe_foe_get_vlan_vpm(skb, &vpm);
++	airoha_ppe_foe_get_pppoe_info(skb, vn, &pppid);
+ 
+ 	if(packet_hash_collision_check(skb, hwe, vn) < 0)
+ 		return;
+@@ -1249,6 +1266,8 @@ static void airoha_ppe_general_bind(stru
+ 				AIROHA_FOE_IB1_BIND_STATE);
+ 	ib1 |= FIELD_PREP(AIROHA_FOE_IB1_BIND_VLAN_LAYER, vn) | 
+ 					FIELD_PREP(AIROHA_FOE_IB1_BIND_VPM, vpm) |
++					FIELD_PREP(AIROHA_FOE_IB1_BIND_PPPOE,
++						   !!pppid && type != PPE_PKT_TYPE_BRIDGE) |
+ 					FIELD_PREP(AIROHA_FOE_IB1_BIND_TIMESTAMP, ts) | 
+ 					FIELD_PREP(AIROHA_FOE_IB1_BIND_STATE, AIROHA_FOE_STATE_BIND);
+ 	
+@@ -1328,7 +1347,7 @@ static void airoha_ppe_general_bind(stru
+ 		l2->vlan1 = vid1;
+ 		l2->vlan2 = vid2;
+ 	}
+-	airoha_set_ppe_mac(hwe,skb->dev,skb->data+6,skb->data,0);
++	airoha_set_ppe_mac(hwe,skb->dev,skb->data+6,skb->data,pppid);
+ 
+ 	arht_set_ppe_lanif(skb,hash);
+ 
+@@ -2914,9 +2933,18 @@ void airoha_ppe_foe_flow_update_pon_offl
+ 						((AIROHA_NUM_QOS_QUEUES - 1) - ((pinfo->txq) % AIROHA_NUM_QOS_QUEUES))) |
+ 	       			FIELD_PREP(AIROHA_FOE_SHAPER_ID, meter0_idx);
+ 
+-			e->data.ib1 |= FIELD_PREP(AIROHA_FOE_IB1_BIND_VLAN_LAYER, !!vn) | 
+-							FIELD_PREP(AIROHA_FOE_IB1_BIND_VPM, !!vn) | 
+-							FIELD_PREP(AIROHA_FOE_IB1_BIND_PPPOE, !!pppid);
++			u16 vpm;
++
++			airoha_ppe_foe_get_vlan_vpm(skb, &vpm);
++			/* The frame carries every tag and the session, so it
++			 * decides these fields for the PON egress.
++			 */
++			e->data.ib1 &= ~(AIROHA_FOE_IB1_BIND_VLAN_LAYER |
++					 AIROHA_FOE_IB1_BIND_VPM |
++					 AIROHA_FOE_IB1_BIND_PPPOE);
++			e->data.ib1 |= FIELD_PREP(AIROHA_FOE_IB1_BIND_VLAN_LAYER, vn) |
++				       FIELD_PREP(AIROHA_FOE_IB1_BIND_VPM, vpm) |
++				       FIELD_PREP(AIROHA_FOE_IB1_BIND_PPPOE, !!pppid);
+ 			switch (type) {
+ 				case PPE_PKT_TYPE_IPV4_ROUTE:
+ 				case PPE_PKT_TYPE_IPV4_HNAPT:
