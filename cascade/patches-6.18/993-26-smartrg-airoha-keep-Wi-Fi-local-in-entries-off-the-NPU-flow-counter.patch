@@ -1,0 +1,31 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Sat, 26 Sep 2026 20:32:45 -0700
+Subject: [PATCH] net: airoha: keep Wi-Fi local-in entries off the NPU flow counter
+
+The driver sends a committed PPE entry through the NPU, so that the
+NPU counts its packets. Upstream skips this for traffic that the Wi-Fi
+NIC received, in commit a7cc1aa151e3 ("net: airoha: Introduce
+check_skb callback in ppe_dev ops"). The local-in bind of the Wi-Fi
+local fastpath did not skip it.
+
+Such an entry now skips the counter, as upstream does. The flow ends
+on the host, so conntrack still counts it.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/arht_ppe.c |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/ethernet/airoha/arht_ppe.c
++++ b/drivers/net/ethernet/airoha/arht_ppe.c
+@@ -1464,7 +1464,9 @@ int arht_general_offload_bind(struct sk_
+ 		airoha_set_ppe_mac(hwe,skb->dev,mac_h+6,mac_h,0);
+ 	}
+ 
+-	airoha_ppe_foe_commit_entry_ptr(glb_eth->ppe, hwe, foe_entry_idx, 0);
++	/* LOCAL_IN_NS entries come only from the Wi-Fi local fastpath. */
++	airoha_ppe_foe_commit_entry_ptr(glb_eth->ppe, hwe, foe_entry_idx,
++					type == PPE_UDF_LOCAL_IN_NS);
+ 
+ unlock:	
+ 	spin_unlock_bh(&ppe_lock);

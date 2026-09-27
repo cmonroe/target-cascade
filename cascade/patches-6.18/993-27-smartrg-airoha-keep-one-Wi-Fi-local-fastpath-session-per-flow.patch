@@ -1,0 +1,48 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Sat, 26 Sep 2026 20:32:45 -0700
+Subject: [PATCH] net: airoha: keep one Wi-Fi local fastpath session per flow
+
+The Wi-Fi local fastpath adds a session when a listed application
+sends a packet. It did so for each packet of a flow whose session had
+no Wi-Fi mark. Such a flow filled all session slots, and a flow that
+started later found no free slot.
+
+A flow now has at most one session.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/arht_wifi_lo.c |    9 +++++++++
+ 1 file changed, 9 insertions(+)
+
+--- a/drivers/net/ethernet/airoha/arht_wifi_lo.c
++++ b/drivers/net/ethernet/airoha/arht_wifi_lo.c
+@@ -797,6 +797,12 @@ static void wifi_lo_add_ety(struct sk_bu
+ 		dst_hold(dst);
+ 
+ 	spin_lock_bh(&wifi_lo_lock);
++	/* The static key turns on from a work item, and two CPUs can miss
++	 * the lookup of the hook at the same time.
++	 */
++	if (wifi_lo_find_by_port(th->source, th->dest))
++		goto unlock;
++
+ 	for (i = 0; i < WIFI_LO_MAX_NUM; i++) {
+ 		lo = &wifi_lo_ety[i];
+ 		/* Skip both live slots and slots whose previous occupant is
+@@ -834,6 +840,7 @@ static void wifi_lo_add_ety(struct sk_bu
+ 		added = true;
+ 		break;
+ 	}
++unlock:
+ 	spin_unlock_bh(&wifi_lo_lock);
+ 
+ 	if (!added) {
+@@ -978,6 +985,8 @@ static unsigned int wifi_lo_nf_hook_loca
+ 			return NF_STOLEN;
+ 		}
+ 		rcu_read_unlock();
++		if (lo)
++			return NF_ACCEPT;
+ 	}
+ 
+ 	if (wifi_lo_app_match(current->comm))
