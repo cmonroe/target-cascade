@@ -42,10 +42,9 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	return acct;
  }
  
--static void mtk_ppe_cache_clear(struct mtk_ppe *ppe)
 +static void mtk_ppe_cache_write(struct mtk_ppe *ppe, u32 line, u32 tag,
 +				u32 state, u32 *data)
- {
++{
 +	struct mtk_eth *eth = ppe->eth;
 +	int i;
 +
@@ -108,8 +107,8 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 +	}
 +}
 +
-+void mtk_ppe_cache_clear(struct mtk_ppe *ppe)
-+{
+ static void mtk_ppe_cache_clear(struct mtk_ppe *ppe)
+ {
 +	static const u32 mask = MTK_PPE_ALERT_TCP_FIN_RST_SYN |
 +				MTK_PPE_MD_TOAP_BYP_CRSN0 |
 +				MTK_PPE_MD_TOAP_BYP_CRSN1 |

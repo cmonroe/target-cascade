@@ -9,7 +9,20 @@ Subject: [PATCH] OWRT-7643 Adtran quirks added
 
 --- a/drivers/net/phy/sfp.c
 +++ b/drivers/net/phy/sfp.c
-@@ -471,31 +471,67 @@ static void sfp_fixup_rollball_cc(struct
+@@ -387,12 +387,6 @@ static void sfp_fixup_ignore_tx_fault(st
+ 	sfp->state_ignore_mask |= SFP_F_TX_FAULT;
+ }
+ 
+-static void sfp_fixup_ignore_tx_fault_and_los(struct sfp *sfp)
+-{
+-	sfp_fixup_ignore_tx_fault(sfp);
+-	sfp_fixup_ignore_los(sfp);
+-}
+-
+ static void sfp_fixup_ignore_hw(struct sfp *sfp, unsigned int mask)
+ {
+ 	sfp->state_hw_mask &= ~mask;
+@@ -471,31 +465,67 @@ static void sfp_fixup_rollball_cc(struct
  	sfp->id.base.extended_cc = SFF8024_ECC_10GBASE_T_SFI;
  }
  
@@ -77,7 +90,7 @@ Subject: [PATCH] OWRT-7643 Adtran quirks added
  }
  
  static void sfp_quirk_ubnt_uf_instant(struct sfp *sfp,
-@@ -518,6 +554,44 @@ static void sfp_quirk_ubnt_uf_instant(st
+@@ -518,6 +548,44 @@ static void sfp_quirk_ubnt_uf_instant(st
  	__set_bit(PHY_INTERFACE_MODE_1000BASEX, caps->interfaces);
  }
  
@@ -122,7 +135,7 @@ Subject: [PATCH] OWRT-7643 Adtran quirks added
  #define SFP_QUIRK(_v, _p, _s, _f) \
  	{ .vendor = _v, .part = _p, .support = _s, .fixup = _f, }
  #define SFP_QUIRK_S(_v, _p, _s) SFP_QUIRK(_v, _p, _s, NULL)
-@@ -583,6 +657,8 @@ static void sfp_quirk_phy_mode(struct sf
+@@ -583,6 +651,8 @@ static void sfp_quirk_phy_mode(struct sf
  		break;
  	}
  
@@ -131,7 +144,7 @@ Subject: [PATCH] OWRT-7643 Adtran quirks added
  	dev_warn(sfp->dev, "%s: set speed: %d based on bus phy-mode: %s",
  		 __FUNCTION__, speed, phy_modes(interface));
  	dev_warn(sfp->dev, "%s: exit modes 0x%016lx",
-@@ -600,8 +676,9 @@ static const struct sfp_quirk sfp_quirk_
+@@ -600,8 +670,9 @@ static const struct sfp_quirk sfp_quirk_
  static const struct sfp_quirk sfp_quirks[] = {
  	// Alcatel Lucent G-010S-P can operate at 2500base-X, but incorrectly
  	// report 2500MBd NRZ in their EEPROM
@@ -142,7 +155,7 @@ Subject: [PATCH] OWRT-7643 Adtran quirks added
  
  	// Alcatel Lucent G-010S-A can operate at 2500base-X, but report 3.2GBd
  	// NRZ in their EEPROM
-@@ -639,7 +716,7 @@ static const struct sfp_quirk sfp_quirks
+@@ -639,7 +710,7 @@ static const struct sfp_quirk sfp_quirks
  	// Huawei MA5671A can operate at 2500base-X, but report 1.2GBd NRZ in
  	// their EEPROM
  	SFP_QUIRK("HUAWEI", "MA5671A", sfp_quirk_2500basex,
@@ -151,7 +164,7 @@ Subject: [PATCH] OWRT-7643 Adtran quirks added
  
  	// Hisense LXT-010S-H is a GPON ONT SFP (sold as LEOX LXT-010S-H) that
  	// can operate at 2500base-X, but reports 1000BASE-LX / 1300MBd in its
-@@ -691,6 +768,31 @@ static const struct sfp_quirk sfp_quirks
+@@ -691,6 +762,31 @@ static const struct sfp_quirk sfp_quirks
  	SFP_QUIRK_F("Turris", "RTSFP-10", sfp_fixup_rollball),
  	SFP_QUIRK_F("Turris", "RTSFP-10G", sfp_fixup_rollball),
  
