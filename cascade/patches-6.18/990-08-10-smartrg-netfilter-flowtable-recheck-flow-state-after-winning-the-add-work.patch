@@ -1,0 +1,41 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Wed, 30 Sep 2026 14:06:34 -0700
+Subject: [PATCH] netfilter: flowtable: recheck flow state after winning the add work
+
+The refresh path tests the closing and teardown bits before it wins
+the pending bit. A teardown or a hardware delete that lands in
+between leaves an add work queued on a flow that garbage collection
+can release. It can also reinstall a hardware entry that nothing
+removes.
+
+The add path now tests the bits again once it holds the pending bit,
+and backs off if any is set. All the bits live in one word, so either
+the add path sees the teardown or garbage collection sees the pending
+bit.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ net/netfilter/nf_flow_table_offload.c |   12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+--- a/net/netfilter/nf_flow_table_offload.c
++++ b/net/netfilter/nf_flow_table_offload.c
+@@ -1147,6 +1147,18 @@ void nf_flow_offload_add(struct nf_flowt
+ 	if (!offload)
+ 		return;
+ 
++	/* The caller tested these bits before it won the pending bit; a
++	 * teardown or a hardware delete that landed in between must win,
++	 * or the work would run on a flow the gc is free to release.
++	 */
++	if (test_bit(NF_FLOW_TEARDOWN, &flow->flags) ||
++	    test_bit(NF_FLOW_CLOSING, &flow->flags) ||
++	    test_bit(NF_FLOW_HW_DYING, &flow->flags)) {
++		clear_bit_unlock(NF_FLOW_HW_PENDING, &flow->flags);
++		kfree(offload);
++		return;
++	}
++
+ 	flow_offload_queue_work(offload);
+ }
+ 
