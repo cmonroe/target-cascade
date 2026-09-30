@@ -1,0 +1,59 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Wed, 30 Sep 2026 14:05:00 -0700
+Subject: [PATCH] netfilter: flowtable: do not free a flow with offload work pending
+
+A closing TCP flow keeps its entry in the software table after the
+hardware delete, and garbage collection keeps queueing statistics
+work for it. When the flow then expires, garbage collection frees it
+at once because the flow is already HW_DYING and HW_DEAD. The last
+statistics work may still hold the flow pointer at that time.
+
+Garbage collection now leaves a flow alone while an offload work is
+pending. It also stops polling the statistics of a flow whose
+hardware entry is gone. The worker clears the pending bit with
+release semantics, so its last writes to the flow and the conntrack
+are visible before the free.
+
+Fixes: fdbaf5163331 ("netfilter: flowtable: add CLOSING state")
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ net/netfilter/nf_flow_table_core.c    |    6 ++++--
+ net/netfilter/nf_flow_table_offload.c |    5 ++++-
+ 2 files changed, 8 insertions(+), 3 deletions(-)
+
+--- a/net/netfilter/nf_flow_table_core.c
++++ b/net/netfilter/nf_flow_table_core.c
+@@ -645,7 +645,8 @@ static void nf_flow_offload_gc_step(stru
+ 		if (test_bit(NF_FLOW_HW, &flow->flags)) {
+ 			if (!test_bit(NF_FLOW_HW_DYING, &flow->flags))
+ 				nf_flow_offload_del(flow_table, flow);
+-			else if (test_bit(NF_FLOW_HW_DEAD, &flow->flags))
++			else if (test_bit(NF_FLOW_HW_DEAD, &flow->flags) &&
++				 !test_bit(NF_FLOW_HW_PENDING, &flow->flags))
+ 				flow_offload_del(flow_table, flow);
+ 		} else {
+ 			flow_offload_del(flow_table, flow);
+@@ -654,7 +655,8 @@ static void nf_flow_offload_gc_step(stru
+ 		   test_bit(NF_FLOW_HW, &flow->flags) &&
+ 		   !test_bit(NF_FLOW_HW_DYING, &flow->flags)) {
+ 		nf_flow_offload_del(flow_table, flow);
+-	} else if (test_bit(NF_FLOW_HW, &flow->flags)) {
++	} else if (test_bit(NF_FLOW_HW, &flow->flags) &&
++		   !test_bit(NF_FLOW_HW_DYING, &flow->flags)) {
+ 		nf_flow_offload_stats(flow_table, flow);
+ 	}
+ }
+--- a/net/netfilter/nf_flow_table_offload.c
++++ b/net/netfilter/nf_flow_table_offload.c
+@@ -1086,7 +1086,10 @@ static void flow_offload_work_handler(st
+ 			WARN_ON_ONCE(1);
+ 	}
+ 
+-	clear_bit(NF_FLOW_HW_PENDING, &offload->flow->flags);
++	/* Release: the flow and conntrack writes above must be visible before
++	 * the gc sees the bit clear and can free the flow.
++	 */
++	clear_bit_unlock(NF_FLOW_HW_PENDING, &offload->flow->flags);
+ 	kfree(offload);
+ }
+ 
