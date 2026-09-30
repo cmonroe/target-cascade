@@ -35,7 +35,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  void flow_offload_teardown(struct flow_offload *flow);
 --- a/net/netfilter/nf_flow_table_core.c
 +++ b/net/netfilter/nf_flow_table_core.c
-@@ -932,6 +932,24 @@ static struct notifier_block flow_offloa
+@@ -941,6 +941,24 @@ static struct notifier_block flow_offloa
  };
  #endif
  

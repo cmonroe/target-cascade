@@ -64,7 +64,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static DEFINE_MUTEX(flowtable_lock);
  static LIST_HEAD(flowtables);
  
-@@ -330,6 +341,39 @@ unsigned long flow_offload_get_timeout(s
+@@ -331,6 +342,39 @@ unsigned long flow_offload_get_timeout(s
  	return timeout;
  }
  
