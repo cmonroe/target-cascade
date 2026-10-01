@@ -25,7 +25,7 @@ Subject: [PATCH] OWRT-7979 commented out _mdb_ add and del functions
  
  static int
  mt7530_vlan_cmd(struct mt7530_priv *priv, enum mt7530_vlan_cmd cmd, u16 vid)
-@@ -3460,8 +3462,8 @@ const struct dsa_switch_ops mt7530_switc
+@@ -3492,8 +3494,8 @@ const struct dsa_switch_ops mt7530_switc
  	.port_fdb_add		= mt7530_port_fdb_add,
  	.port_fdb_del		= mt7530_port_fdb_del,
  	.port_fdb_dump		= mt7530_port_fdb_dump,

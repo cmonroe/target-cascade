@@ -17,7 +17,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -2060,6 +2060,7 @@ static netdev_tx_t mtk_start_xmit(struct
+@@ -2082,6 +2082,7 @@ static netdev_tx_t mtk_start_xmit(struct
  
  	tx_num = mtk_cal_txd_req(eth, skb);
  	if (unlikely(atomic_read(&ring->free_count) <= tx_num)) {

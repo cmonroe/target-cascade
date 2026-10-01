@@ -25,7 +25,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -3878,33 +3878,40 @@ static int mtk_device_event(struct notif
+@@ -3900,33 +3900,40 @@ static int mtk_device_event(struct notif
  	struct dsa_port *dp;
  	unsigned int queue;
  

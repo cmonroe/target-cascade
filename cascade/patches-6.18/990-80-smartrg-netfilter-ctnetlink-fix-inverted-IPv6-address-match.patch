@@ -20,7 +20,7 @@ Fixes: cb8aa9a3affb ("netfilter: ctnetlink: add kernel side filtering for dump")
 Signed-off-by: Piotr Kubik <piotr.kubik@adtran.com>
 --- a/net/netfilter/nf_conntrack_netlink.c
 +++ b/net/netfilter/nf_conntrack_netlink.c
-@@ -1096,13 +1096,13 @@ static int ctnetlink_filter_match_tuple(
+@@ -1098,13 +1098,13 @@ static int ctnetlink_filter_match_tuple(
  		break;
  	case NFPROTO_IPV6:
  		if ((flags & CTA_FILTER_FLAG(CTA_IP_SRC)) &&

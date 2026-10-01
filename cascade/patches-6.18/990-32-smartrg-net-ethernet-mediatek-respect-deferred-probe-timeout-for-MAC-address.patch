@@ -16,7 +16,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -5737,15 +5737,21 @@ free_netdev:
+@@ -5763,15 +5763,21 @@ free_netdev:
  static int mtk_mac_assign_address(struct mtk_eth *eth, int i, bool test_defer_only)
  {
  	int err = of_get_ethdev_address(eth->mac[i]->of_node, eth->netdev[i]);

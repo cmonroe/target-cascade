@@ -20,7 +20,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -902,6 +902,23 @@ out:
+@@ -900,6 +900,23 @@ out:
  	mtk_w32(eth, val, soc->reg_map->qdma.qtx_sch + ofs);
  }
  

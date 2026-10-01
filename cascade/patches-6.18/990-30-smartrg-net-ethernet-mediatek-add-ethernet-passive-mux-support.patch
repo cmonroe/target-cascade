@@ -49,7 +49,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  #include <linux/jhash.h>
  #include <linux/bitfield.h>
  #include <net/dsa.h>
-@@ -5224,7 +5225,10 @@ static int mtk_fill_available_pcs(struct
+@@ -5246,7 +5247,10 @@ static int mtk_fill_available_pcs(struct
  	unsigned int sid;
  
  	if (mtk_is_netsys_v3_or_greater(eth)) {
@@ -61,7 +61,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  						available_pcs,
  						num_possible_pcs);
  	} else {
-@@ -5239,6 +5243,241 @@ static int mtk_fill_available_pcs(struct
+@@ -5261,6 +5265,241 @@ static int mtk_fill_available_pcs(struct
  	return 0;
  }
  
@@ -302,8 +302,8 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 +
  static int mtk_add_mac(struct mtk_eth *eth, struct device_node *np)
  {
- 	const __be32 *_id = of_get_property(np, "reg", NULL);
-@@ -5278,6 +5517,7 @@ static int mtk_add_mac(struct mtk_eth *e
+ 	const struct phylink_mac_ops *mac_ops = &mtk_phylink_ops;
+@@ -5301,6 +5540,7 @@ static int mtk_add_mac(struct mtk_eth *e
  	mac->id = id;
  	mac->hw = eth;
  	mac->of_node = np;
@@ -311,7 +311,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  
  	/*
  	 * Initialize the DSA user-port queue map to an identity mapping
-@@ -5590,7 +5830,7 @@ static int mtk_setup_legacy_sram(struct
+@@ -5616,7 +5856,7 @@ static int mtk_setup_legacy_sram(struct
  static int mtk_probe(struct platform_device *pdev)
  {
  	struct resource *res = NULL;
@@ -320,7 +320,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	struct mtk_eth *eth;
  	int err, i;
  
-@@ -5817,6 +6057,26 @@ static int mtk_probe(struct platform_dev
+@@ -5843,6 +6083,26 @@ static int mtk_probe(struct platform_dev
  			goto err_free_dev;
  	}
  
@@ -347,7 +347,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	if (eth->soc->offload_version) {
  		u8 ppe_num = eth->soc->ppe_num;
  
-@@ -5876,6 +6136,7 @@ err_unreg_netdev:
+@@ -5902,6 +6162,7 @@ err_unreg_netdev:
  	mtk_unreg_dev(eth);
  err_deinit_ppe:
  	mtk_ppe_deinit(eth);
@@ -355,7 +355,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	mtk_mdio_cleanup(eth);
  err_free_dev:
  	mtk_free_dev(eth);
-@@ -5912,6 +6173,7 @@ static void mtk_remove(struct platform_d
+@@ -5938,6 +6199,7 @@ static void mtk_remove(struct platform_d
  	mtk_cleanup(eth);
  	free_netdev(eth->dummy_dev);
  	mtk_mdio_cleanup(eth);

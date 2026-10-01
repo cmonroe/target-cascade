@@ -243,7 +243,7 @@ Signed-off-by: Tim Hayes <tim.hayes@smartrg.com>
  static void mt7530_get_eth_ctrl_stats(struct dsa_switch *ds, int port,
  				      struct ethtool_eth_ctrl_stats *ctrl_stats)
  {
-@@ -3261,11 +3360,11 @@ const struct dsa_switch_ops mt7530_switc
+@@ -3293,11 +3392,11 @@ const struct dsa_switch_ops mt7530_switc
  	.preferred_default_local_cpu_port = mt753x_preferred_default_local_cpu_port,
  	.get_strings		= mt7530_get_strings,
  	.get_ethtool_stats	= mt7530_get_ethtool_stats,
@@ -256,7 +256,7 @@ Signed-off-by: Tim Hayes <tim.hayes@smartrg.com>
  	.set_ageing_time	= mt7530_set_ageing_time,
  	.port_enable		= mt7530_port_enable,
  	.port_disable		= mt7530_port_disable,
-@@ -3397,6 +3496,11 @@ mt7530_probe_common(struct mt7530_priv *
+@@ -3439,6 +3538,11 @@ mt7530_probe_common(struct mt7530_priv *
  	mutex_init(&priv->reg_mutex);
  	dev_set_drvdata(dev, priv);
  
@@ -268,7 +268,7 @@ Signed-off-by: Tim Hayes <tim.hayes@smartrg.com>
  	return 0;
  }
  EXPORT_SYMBOL_GPL(mt7530_probe_common);
-@@ -3404,6 +3508,8 @@ EXPORT_SYMBOL_GPL(mt7530_probe_common);
+@@ -3446,6 +3550,8 @@ EXPORT_SYMBOL_GPL(mt7530_probe_common);
  void
  mt7530_remove_common(struct mt7530_priv *priv)
  {
@@ -279,7 +279,7 @@ Signed-off-by: Tim Hayes <tim.hayes@smartrg.com>
  
 --- a/drivers/net/dsa/mt7530.h
 +++ b/drivers/net/dsa/mt7530.h
-@@ -768,18 +768,7 @@ enum mt7531_xtal_fsel {
+@@ -769,18 +769,7 @@ enum mt7531_xtal_fsel {
  #define  REG_GSWCK_EN			BIT(0)
  #define  REG_TRGMIICK_EN		BIT(1)
  
@@ -299,7 +299,7 @@ Signed-off-by: Tim Hayes <tim.hayes@smartrg.com>
  
  struct mt7530_fdb {
  	u16 vid;
-@@ -900,6 +889,10 @@ struct mt7530_priv {
+@@ -901,6 +890,10 @@ struct mt7530_priv {
  	int (*create_sgmii)(struct mt7530_priv *priv);
  	u8 active_cpu_ports;
  	struct mdio_device *mdiodev;

@@ -40,7 +40,7 @@ Signed-off-by: neal.yen <neal.yen@mediatek.com>
  	GPIOD_ASIS,
  	GPIOD_ASIS,
  	GPIOD_ASIS,
-@@ -836,7 +836,7 @@ static unsigned int sfp_gpio_get_state(s
+@@ -838,7 +838,7 @@ static unsigned int sfp_gpio_get_state(s
  	unsigned int i, state, v;
  
  	for (i = state = 0; i < GPIO_MAX; i++) {
@@ -49,7 +49,7 @@ Signed-off-by: neal.yen <neal.yen@mediatek.com>
  			continue;
  
  		v = gpiod_get_value_cansleep(sfp->gpio[i]);
-@@ -3468,7 +3468,7 @@ static int sfp_probe(struct platform_dev
+@@ -3470,7 +3470,7 @@ static int sfp_probe(struct platform_dev
  	}
  
  	for (i = 0; i < GPIO_MAX; i++) {
@@ -58,7 +58,7 @@ Signed-off-by: neal.yen <neal.yen@mediatek.com>
  			continue;
  
  		sfp->gpio_irq[i] = gpiod_to_irq(sfp->gpio[i]);
-@@ -3485,9 +3485,16 @@ static int sfp_probe(struct platform_dev
+@@ -3487,9 +3487,16 @@ static int sfp_probe(struct platform_dev
  		if (!sfp_irq_name)
  			return -ENOMEM;
  

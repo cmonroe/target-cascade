@@ -17,7 +17,7 @@ Signed-off-by: Piotr Kubik <piotr.kubik@adtran.com>
 ---
 --- a/drivers/regulator/core.c
 +++ b/drivers/regulator/core.c
-@@ -6607,7 +6607,7 @@ static int __init regulator_init_complet
+@@ -6624,7 +6624,7 @@ static int __init regulator_init_complet
  	 */
  	queue_delayed_work(system_freezable_wq,
  			   &regulator_init_complete_work,

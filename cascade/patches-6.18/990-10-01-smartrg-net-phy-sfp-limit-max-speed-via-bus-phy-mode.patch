@@ -180,7 +180,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static const struct sfp_quirk sfp_quirks[] = {
  	// Alcatel Lucent G-010S-P can operate at 2500base-X, but incorrectly
  	// report 2500MBd NRZ in their EEPROM
-@@ -2552,6 +2633,24 @@ static int sfp_sm_mod_probe(struct sfp *
+@@ -2554,6 +2635,24 @@ static int sfp_sm_mod_probe(struct sfp *
  		sfp->mdio_protocol = MDIO_I2C_NONE;
  
  	sfp->quirk = sfp_lookup_quirk(&id);

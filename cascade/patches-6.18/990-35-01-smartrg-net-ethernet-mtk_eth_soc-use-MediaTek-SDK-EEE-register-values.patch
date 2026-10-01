@@ -22,7 +22,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -1026,6 +1026,8 @@ static void mtk_mac_disable_tx_lpi(struc
+@@ -1024,6 +1024,8 @@ static void mtk_mac_disable_tx_lpi(struc
  					   phylink_config);
  	struct mtk_eth *eth = mac->hw;
  
@@ -31,7 +31,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	mtk_m32(eth, MAC_MCR_EEE100M | MAC_MCR_EEE1G, 0, MTK_MAC_MCR(mac->id));
  }
  
-@@ -1035,7 +1037,7 @@ static int mtk_mac_enable_tx_lpi(struct
+@@ -1033,7 +1035,7 @@ static int mtk_mac_enable_tx_lpi(struct
  	struct mtk_mac *mac = container_of(config, struct mtk_mac,
  					   phylink_config);
  	struct mtk_eth *eth = mac->hw;
@@ -40,7 +40,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	if (mtk_interface_mode_is_xgmii(eth, mac->interface))
  		return -EOPNOTSUPP;
-@@ -1054,17 +1056,23 @@ static int mtk_mac_enable_tx_lpi(struct
+@@ -1052,17 +1054,23 @@ static int mtk_mac_enable_tx_lpi(struct
  	else
  		val = MAC_EEE_LPI_TXIDLE_THD;
  

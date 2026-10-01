@@ -16,7 +16,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -808,6 +808,9 @@ static void mtk_set_queue_speed(struct m
+@@ -806,6 +806,9 @@ static void mtk_set_queue_speed(struct m
  	if (mtk_is_netsys_v1(eth))
  		val |= MTK_QTX_SCH_LEAKY_BUCKET_EN;
  
@@ -26,7 +26,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	if (IS_ENABLED(CONFIG_SOC_MT7621)) {
  		switch (speed) {
  		case SPEED_10:
-@@ -831,8 +834,15 @@ static void mtk_set_queue_speed(struct m
+@@ -829,8 +832,15 @@ static void mtk_set_queue_speed(struct m
  		default:
  			break;
  		}
@@ -44,7 +44,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  		switch (speed) {
  		case SPEED_10:
  			val |= MTK_QTX_SCH_MAX_RATE_EN_V3 |
-@@ -875,11 +885,18 @@ static void mtk_set_queue_speed(struct m
+@@ -873,11 +883,18 @@ static void mtk_set_queue_speed(struct m
  			       FIELD_PREP(MTK_QTX_SCH_MAX_RATE_EXP, 6) |
  			       FIELD_PREP(MTK_QTX_SCH_MAX_RATE_WEIGHT, 10);
  			break;

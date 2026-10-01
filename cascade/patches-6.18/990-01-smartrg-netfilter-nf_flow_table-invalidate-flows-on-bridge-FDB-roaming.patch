@@ -59,7 +59,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static void
  flow_offload_fill_dir(struct flow_offload *flow,
  		      enum flow_offload_tuple_dir dir)
-@@ -341,6 +356,12 @@ int flow_offload_add(struct nf_flowtable
+@@ -348,6 +363,12 @@ int flow_offload_add(struct nf_flowtable
  
  	nf_ct_refresh(flow->ct, NF_CT_DAY);
  
@@ -72,7 +72,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	if (nf_flowtable_hw_offload(flow_table)) {
  		__set_bit(NF_FLOW_HW, &flow->flags);
  		nf_flow_offload_add(flow_table, flow);
-@@ -372,6 +393,11 @@ EXPORT_SYMBOL_GPL(flow_offload_refresh);
+@@ -379,6 +400,11 @@ EXPORT_SYMBOL_GPL(flow_offload_refresh);
  static void flow_offload_del(struct nf_flowtable *flow_table,
  			     struct flow_offload *flow)
  {
@@ -84,7 +84,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  	rhashtable_remove_fast(&flow_table->rhashtable,
  			       &flow->tuplehash[FLOW_OFFLOAD_DIR_ORIGINAL].node,
  			       nf_flow_offload_rhash_params);
-@@ -698,6 +724,9 @@ int nf_flow_table_init(struct nf_flowtab
+@@ -705,6 +731,9 @@ int nf_flow_table_init(struct nf_flowtab
  	INIT_DELAYED_WORK(&flowtable->gc_work, nf_flow_offload_work_gc);
  	flow_block_init(&flowtable->flow_block);
  	init_rwsem(&flowtable->flow_block_lock);
@@ -94,7 +94,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  	err = rhashtable_init(&flowtable->rhashtable,
  			      &nf_flow_offload_rhash_params);
-@@ -750,6 +779,123 @@ void nf_flow_table_cleanup(struct net_de
+@@ -757,6 +786,123 @@ void nf_flow_table_cleanup(struct net_de
  }
  EXPORT_SYMBOL_GPL(nf_flow_table_cleanup);
  
@@ -218,7 +218,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  void nf_flow_table_free(struct nf_flowtable *flow_table)
  {
  	mutex_lock(&flowtable_lock);
-@@ -848,8 +994,27 @@ static int __init nf_flow_table_module_i
+@@ -855,8 +1001,27 @@ static int __init nf_flow_table_module_i
  	if (ret)
  		goto out_bpf;
  
@@ -246,7 +246,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  out_bpf:
  	nf_flow_table_offload_exit();
  out_offload:
-@@ -859,6 +1024,11 @@ out_offload:
+@@ -866,6 +1031,11 @@ out_offload:
  
  static void __exit nf_flow_table_module_exit(void)
  {
@@ -256,8 +256,8 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 +	destroy_workqueue(flow_mac_cleanup_wq);
 +#endif
  	unregister_netdevice_notifier(&flow_offload_netdev_notifier);
+ 	rcu_barrier();
  	nf_flow_table_offload_exit();
- 	unregister_pernet_subsys(&nf_flow_table_net_ops);
 --- a/include/net/netfilter/nf_flow_table.h
 +++ b/include/net/netfilter/nf_flow_table.h
 @@ -85,6 +85,9 @@ struct nf_flowtable {

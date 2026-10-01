@@ -18,7 +18,7 @@ RX queue, so get_rps_cpu() does not steer it. Ring 12 stays on bank
 QDMA gets CPU n as its default affinity. User space can still change
 the affinity.
 
-Bank 1 also serves rings 21 to 30, and banks 2 and 3 also serve
+Bank 1 also serves rings 21 to 31, and banks 2 and 3 also serve
 rings 5 and 6, so that work moves to CPUs 1 to 3 as well. Bank 0
 keeps the TX completions.
 
@@ -76,11 +76,11 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  
  /* RX queue to IRQ mapping: BIT(q) in IRQ(n) */
 -#define RX_IRQ0_BANK_PIN_MASK			0xfb9f
--#define RX_IRQ1_BANK_PIN_MASK			0x7fe00000
+-#define RX_IRQ1_BANK_PIN_MASK			0xffe00000
 -#define RX_IRQ2_BANK_PIN_MASK			0x20
 -#define RX_IRQ3_BANK_PIN_MASK			0x40
 +#define RX_IRQ0_BANK_PIN_MASK			0x1b9fU
-+#define RX_IRQ1_BANK_PIN_MASK			0x7fe02000U
++#define RX_IRQ1_BANK_PIN_MASK			0xffe02000U
 +#define RX_IRQ2_BANK_PIN_MASK			0x4020U
 +#define RX_IRQ3_BANK_PIN_MASK			0x8040U
  #define RX_IRQ_BANK_PIN_MASK(_n)		\

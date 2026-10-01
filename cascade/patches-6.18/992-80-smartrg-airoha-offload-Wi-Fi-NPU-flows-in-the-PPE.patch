@@ -245,7 +245,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 -
  /* RX queue to IRQ mapping: BIT(q) in IRQ(n) */
  #define RX_IRQ0_BANK_PIN_MASK			0xfb9f
- #define RX_IRQ1_BANK_PIN_MASK			0x7fe00000
+ #define RX_IRQ1_BANK_PIN_MASK			0xffe00000
 @@ -931,7 +924,7 @@ void airoha_ppe_set_mtu(struct airoha_gd
  void airoha_ppe_set_cpu_port(struct airoha_gdm_dev *dev, u8 ppe_id, u8 fport);
  bool airoha_ppe_is_enabled(struct airoha_eth *eth, int index);

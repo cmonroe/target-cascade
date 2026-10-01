@@ -23,7 +23,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
 
 --- a/net/netfilter/nf_flow_table_core.c
 +++ b/net/netfilter/nf_flow_table_core.c
-@@ -645,7 +645,8 @@ static void nf_flow_offload_gc_step(stru
+@@ -652,7 +652,8 @@ static void nf_flow_offload_gc_step(stru
  		if (test_bit(NF_FLOW_HW, &flow->flags)) {
  			if (!test_bit(NF_FLOW_HW_DYING, &flow->flags))
  				nf_flow_offload_del(flow_table, flow);
@@ -33,7 +33,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  				flow_offload_del(flow_table, flow);
  		} else {
  			flow_offload_del(flow_table, flow);
-@@ -654,7 +655,8 @@ static void nf_flow_offload_gc_step(stru
+@@ -661,7 +662,8 @@ static void nf_flow_offload_gc_step(stru
  		   test_bit(NF_FLOW_HW, &flow->flags) &&
  		   !test_bit(NF_FLOW_HW_DYING, &flow->flags)) {
  		nf_flow_offload_del(flow_table, flow);

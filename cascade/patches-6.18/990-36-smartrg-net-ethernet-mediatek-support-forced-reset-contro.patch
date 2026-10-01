@@ -14,7 +14,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -3662,7 +3662,8 @@ static void mtk_tx_timeout(struct net_de
+@@ -3684,7 +3684,8 @@ static void mtk_tx_timeout(struct net_de
  	eth->netdev[mac->id]->stats.tx_errors++;
  	netif_err(eth, tx_err, dev, "transmit timed out\n");
  
@@ -24,7 +24,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  }
  
  static int mtk_get_irqs(struct platform_device *pdev, struct mtk_eth *eth)
-@@ -4524,7 +4525,7 @@ static void mtk_hw_reset_monitor_work(st
+@@ -4546,7 +4547,7 @@ static void mtk_hw_reset_monitor_work(st
  		goto out;
  
  	/* DMA stuck checks */
@@ -33,7 +33,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  		schedule_work(&eth->pending_work);
  
  out:
-@@ -5986,6 +5987,7 @@ static int mtk_probe(struct platform_dev
+@@ -6012,6 +6013,7 @@ static int mtk_probe(struct platform_dev
  
  	eth->rx_dim.mode = DIM_CQ_PERIOD_MODE_START_FROM_EQE;
  	INIT_WORK(&eth->rx_dim.work, mtk_dim_rx);

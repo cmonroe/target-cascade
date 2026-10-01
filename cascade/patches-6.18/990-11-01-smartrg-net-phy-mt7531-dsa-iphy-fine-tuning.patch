@@ -183,7 +183,7 @@ Subject: [PATCH] 999-2746-mt7531-dsa-iphy-fine-tuning
  static void mtk_gephy_config_init(struct phy_device *phydev)
  {
  	/* Enable HW auto downshift */
-@@ -104,10 +115,91 @@ static int mt7530_led_config_of(struct p
+@@ -132,10 +143,91 @@ static int mt7530_led_config_of(struct p
  	return 0;
  }
  
@@ -275,7 +275,7 @@ Subject: [PATCH] 999-2746-mt7531-dsa-iphy-fine-tuning
  	/* PHY link down power saving enable */
  	phy_set_bits(phydev, 0x17, BIT(4));
  	phy_modify_mmd(phydev, MDIO_MMD_VEND1, MTK_PHY_RXADC_CTRL_RG7,
-@@ -124,9 +216,15 @@ static int mt7531_phy_config_init(struct
+@@ -152,9 +244,15 @@ static int mt7531_phy_config_init(struct
  		       FIELD_PREP(MTK_TX_DELAY_PAIR_B_MASK, 0x4) |
  		       FIELD_PREP(MTK_TX_DELAY_PAIR_D_MASK, 0x4));
  

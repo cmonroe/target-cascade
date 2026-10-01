@@ -75,7 +75,7 @@ Signed-off-by: Chad Monroe <chad@monroe.io>
  static const struct rhashtable_params br_mdb_rht_params = {
  	.head_offset = offsetof(struct net_bridge_mdb_entry, rhnode),
  	.key_offset = offsetof(struct net_bridge_mdb_entry, addr),
-@@ -5249,3 +5258,79 @@ void br_mdb_hash_fini(struct net_bridge
+@@ -5248,3 +5257,79 @@ void br_mdb_hash_fini(struct net_bridge
  	rhashtable_destroy(&br->sg_port_tbl);
  	rhashtable_destroy(&br->mdb_hash_tbl);
  }
