@@ -1,0 +1,48 @@
+From: Koral Ilgun <koral.ilgun@smartrg.com>
+Date: Thu, 01 Oct 2026 12:25:23 -0700
+Subject: [PATCH] net: dsa: mxl862xx: apply the CPU port EVLAN to IGMP traffic
+
+In tag_8021q mode, the ingress Extended VLAN block of the CPU port
+CTP reassigns each frame from the host to the virtual bridge port of
+its user port. The CTP keeps a separate Extended VLAN assignment for
+IGMP traffic, and the driver set only the one for non-IGMP traffic.
+IGMP frames from the host therefore stayed on the CPU bridge port.
+Its port map is empty in tag_8021q mode, so the switch dropped them:
+the queries of a multicast querier on the host did not reach the
+LAN, and the memberships of the LAN hosts expired.
+
+Assign the same block to IGMP traffic, because the reassignment rules
+match only the management VID.
+---
+ drivers/net/dsa/mxl862xx/mxl862xx.c |   11 ++++++++++-
+ 1 file changed, 10 insertions(+), 1 deletion(-)
+
+--- a/drivers/net/dsa/mxl862xx/mxl862xx.c
++++ b/drivers/net/dsa/mxl862xx/mxl862xx.c
+@@ -641,6 +641,12 @@ static void mxl862xx_tag_8021q_disable_c
+  * pipeline evaluates Bridge Port EVLAN first, then CTP EVLAN; the
+  * bridge port reassignment treatment used by tag_8021q only works
+  * reliably from the CTP level.
++ *
++ * The CTP keeps a separate EVLAN assignment for IGMP traffic. Without
++ * it, IGMP from the host skips the reassignment and stays on the CPU
++ * bridge port, whose port map is empty in tag_8021q mode, so the
++ * switch drops it. The reassignment rules match only the management
++ * VID, so the same block serves both kinds of traffic.
+  */
+ static int mxl862xx_set_cpu_ctp_ingress_evlan(struct dsa_switch *ds, int cpu)
+ {
+@@ -649,9 +655,12 @@ static int mxl862xx_set_cpu_ctp_ingress_
+ 	struct mxl862xx_ctp_port_config ctp = {};
+ 
+ 	ctp.logical_port_id = cpu;
+-	ctp.mask = cpu_to_le32(MXL862XX_CTP_PORT_CONFIG_MASK_INGRESS_VLAN);
++	ctp.mask = cpu_to_le32(MXL862XX_CTP_PORT_CONFIG_MASK_INGRESS_VLAN |
++			       MXL862XX_CTP_PORT_CONFIG_MASK_INGRESS_VLAN_IGMP);
+ 	ctp.ingress_extended_vlan_enable = blk->in_use;
+ 	ctp.ingress_extended_vlan_block_id = cpu_to_le16(blk->block_id);
++	ctp.ingress_extended_vlan_igmp_enable = blk->in_use;
++	ctp.ingress_extended_vlan_block_id_igmp = cpu_to_le16(blk->block_id);
+ 
+ 	return MXL862XX_API_WRITE(priv, MXL862XX_CTP_PORTCONFIGSET, ctp);
+ }
