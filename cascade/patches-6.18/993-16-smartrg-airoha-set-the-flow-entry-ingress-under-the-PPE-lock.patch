@@ -1,0 +1,153 @@
+From: Chad Monroe <chad@monroe.io>
+Date: Wed, 30 Sep 2026 17:51:49 -0700
+Subject: [PATCH] net: airoha: set the flow entry ingress under the PPE lock
+
+The receive path looked a flow entry up by hash without the PPE lock
+and then wrote its ingress index. The destroy path unlinks and frees
+entries under the lock on another CPU, so the write can land in a
+freed entry. That field sits at the free list pointer offset of the
+entry's slab cache. One such write corrupts the free list, and the
+next allocation from that cache faults.
+
+The lookup and the write now happen under the lock. The multicast
+matcher walks the flow lists under the lock as well.
+
+Signed-off-by: Chad Monroe <chad@monroe.io>
+---
+ drivers/net/ethernet/airoha/arht_dp_api.c |   11 +--
+ drivers/net/ethernet/airoha/arht_ppe.c    |   56 +++++++++++---------
+ drivers/net/ethernet/airoha/arht_ppe.h    |    3 -
+ 3 files changed, 40 insertions(+), 30 deletions(-)
+
+--- a/drivers/net/ethernet/airoha/arht_dp_api.c
++++ b/drivers/net/ethernet/airoha/arht_dp_api.c
+@@ -1388,12 +1388,11 @@ static void airoha_get_entry_bind(u32 ms
+ 
+ 	AIROHA_LOG(AIROHA_DEBUG_LEVEL_INFO, "CPU_REASON: %u\n", reason);
+ 	if (reason == PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED){
+-		struct airoha_flow_table_entry *flow_e = airoha_flow_table_entry_get_by_hash(eth->ppe, hash);
+-		if(flow_e){
+-			flow_e->ingress_dev_idx = LAN_IDX_FROM_SPTAG(sptag);
+-			if(airoha_get_lan_id(q->skb->dev)==ETH2)
+-				flow_e->ingress_dev_idx = ETH2;
+-		}
++		u32 ingress_dev_idx = LAN_IDX_FROM_SPTAG(sptag);
++
++		if(airoha_get_lan_id(q->skb->dev)==ETH2)
++			ingress_dev_idx = ETH2;
++		airoha_flow_table_entry_set_ingress(eth->ppe, hash, ingress_dev_idx);
+ 		airoha_ppe_check_skb(&eth->ppe->dev, q->skb, hash, reason, false);
+ 
+ 	} else {
+--- a/drivers/net/ethernet/airoha/arht_ppe.c
++++ b/drivers/net/ethernet/airoha/arht_ppe.c
+@@ -3377,9 +3377,7 @@ void npu_get_entry_bind(struct sk_buff *
+ 
+ 	AIROHA_LOG(AIROHA_DEBUG_LEVEL_INFO, "CPU_REASON: %u\n", reason);
+ 	if (reason == PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED){
+-		struct airoha_flow_table_entry *flow_e = airoha_flow_table_entry_get_by_hash(glb_eth->ppe, hash);
+-		if(flow_e)
+-			flow_e->ingress_dev_idx = WIFI_DEV;			
++		airoha_flow_table_entry_set_ingress(glb_eth->ppe, hash, WIFI_DEV);
+ 		airoha_ppe_check_skb(&glb_eth->ppe->dev, skb, hash, reason, false);
+ 	}
+ }
+@@ -3580,24 +3578,34 @@ void arht_ppe_check_tx_skb(struct airoha
+ 	airoha_ppe_foe_flow_update_wifi_npu_offload(ppe, skb, &pinfo);
+ }
+ 
+-struct airoha_flow_table_entry *airoha_flow_table_entry_get_by_hash(struct airoha_ppe *ppe, u32 hash)
++/* The destroy path unlinks and frees entries under ppe_lock, so a pointer
++ * taken outside the lock can be freed before the caller writes to it.
++ */
++void airoha_flow_table_entry_set_ingress(struct airoha_ppe *ppe, u32 hash,
++					 u32 ingress_dev_idx)
+ {
+ 	struct airoha_flow_table_entry *e;
+-	struct airoha_foe_entry *hwe = NULL;
+-	struct hlist_node *n;
+-	u32 index = 0;
++	struct airoha_foe_entry *hwe;
++	u32 index;
++
+ 	if (hash > PPE_HASH_MASK)
+-		return NULL;
++		return;
+ 
+-	hwe = airoha_ppe_foe_get_entry(ppe, hash);
++	spin_lock_bh(&ppe_lock);
++	hwe = airoha_ppe_foe_get_entry_locked(ppe, hash);
+ 	if (!hwe)
+-		return NULL;
++		goto unlock;
++
+ 	index = airoha_ppe_foe_get_entry_hash(ppe, hwe);
+-	hlist_for_each_entry_safe(e, n, &ppe->foe_flow[index], list) {
+-		if(airoha_ppe_foe_compare_entry(e, hwe))
+-			return e;
++	hlist_for_each_entry(e, &ppe->foe_flow[index], list) {
++		if (!airoha_ppe_foe_compare_entry(e, hwe))
++			continue;
++
++		e->ingress_dev_idx = ingress_dev_idx;
++		break;
+ 	}
+-	return NULL;
++unlock:
++	spin_unlock_bh(&ppe_lock);
+ }
+ 
+ int __airoha_ppe_foe_commit_entry(struct airoha_ppe *ppe, u32 hash)
+@@ -3843,29 +3851,31 @@ static int arht_ppe_multicast_get_valid(
+ static int arht_multicast_match_foe_flow(struct airoha_ppe *ppe, struct airoha_foe_entry *hwe)
+ {
+ 	struct airoha_flow_table_entry *e;
+-	struct hlist_node *n;
++	int found = 0;
+ 	int i;
+ 
+-	for (i = 0; i < PPE_NUM_ENTRIES; i++) {
+-		hlist_for_each_entry_safe(e, n, &ppe->foe_flow[i], list) {
++	spin_lock_bh(&ppe_lock);
++	for (i = 0; i < PPE_NUM_ENTRIES && !found; i++) {
++		hlist_for_each_entry(e, &ppe->foe_flow[i], list) {
+ 			int type = FIELD_GET(AIROHA_FOE_IB1_BIND_PACKET_TYPE, e->data.ib1);
+ 			switch (type) {
+ 			case PPE_PKT_TYPE_IPV4_HNAPT:
+-				if(hwe->ipv4.orig_tuple.src_ip == e->data.ipv4.orig_tuple.src_ip &&
+-					hwe->ipv4.orig_tuple.dest_ip == e->data.ipv4.orig_tuple.dest_ip)
+-					return 1;
++				found = hwe->ipv4.orig_tuple.src_ip == e->data.ipv4.orig_tuple.src_ip &&
++					hwe->ipv4.orig_tuple.dest_ip == e->data.ipv4.orig_tuple.dest_ip;
+ 				break;
+ 			case PPE_PKT_TYPE_IPV6_ROUTE_5T:
+-				if(0 == memcmp(&hwe->ipv6, &e->data.ipv6, 32))
+-					return 1;
++				found = !memcmp(&hwe->ipv6, &e->data.ipv6, 32);
+ 				break;
+ 			default:
+ 				break;
+ 			}
++			if (found)
++				break;
+ 		}
+ 	}
++	spin_unlock_bh(&ppe_lock);
+ 
+-	return 0;
++	return found;
+ }
+ 
+ int arht_ppe_multicast_check_valid(struct airoha_ppe *ppe, struct airoha_foe_entry *hwe, unsigned int foe_index)
+--- a/drivers/net/ethernet/airoha/arht_ppe.h
++++ b/drivers/net/ethernet/airoha/arht_ppe.h
+@@ -167,7 +167,8 @@ void airoha_ppe_hook_exit(void);
+ void UpdateShrinkTable(int index,const u8 *addr);
+ void PpeClearEntryInfo(struct airoha_foe_entry *foe_entry);
+ int ppe_entry_is_valid(u32 foe_entry_idx, int ring_idx);
+-struct airoha_flow_table_entry *airoha_flow_table_entry_get_by_hash(struct airoha_ppe *ppe, u32 hash);
++void airoha_flow_table_entry_set_ingress(struct airoha_ppe *ppe, u32 hash,
++					 u32 ingress_dev_idx);
+ int __airoha_ppe_foe_commit_entry(struct airoha_ppe *ppe, u32 hash);
+ void airoha_set_flow_destination(struct net_device *dev, struct airoha_flow_table_entry *e);
+ void airoha_ppe_clear_sram_table_flow(struct airoha_ppe *ppe, uint entry_idx);
