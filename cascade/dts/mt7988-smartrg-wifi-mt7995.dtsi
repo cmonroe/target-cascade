@@ -6,7 +6,7 @@
  * MT7995 tri-band radio: main function and radio node on pcie0 with
  * the matching mt7995 factory precal. Consumers set the pcie0
  * pinctrl and wire up the second PCIe function and module reset;
- * board routing differs (pcie3 on SDG-8733A, pcie1 on SDG-X73-Ultra).
+ * board routing differs (pcie3 on SDG-8733A, pcie1 on SDG-X73-Plus).
  */
 
 #include "mt798x-smartrg-factory-mt7995.dtsi"
