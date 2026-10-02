@@ -1,0 +1,47 @@
+From: Koral Ilgun <koral.ilgun@smartrg.com>
+Date: Fri, 02 Oct 2026 06:58:53 -0700
+Subject: [PATCH] netfilter: xt_FLOWOFFLOAD: do not offload multicast
+
+A flow holds one output per direction, which it resolves when it is
+added. The outputs of a multicast route change when listeners join
+or leave. So a multicast flow in the flowtable continues to send to
+the output that it resolved, also after the last listener left, and
+the counters of the multicast routing stop.
+
+xt_flowoffload_route() sets no source address for the reverse route
+lookup of IPv4, so the lookup succeeds for a multicast flow. IPv4
+multicast that ipmr forwards and IPv6 multicast that ip6mr forwards
+both go into the flowtable.
+
+Skip a multicast destination for both families.
+---
+ net/netfilter/xt_FLOWOFFLOAD.c |   11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+--- a/net/netfilter/xt_FLOWOFFLOAD.c
++++ b/net/netfilter/xt_FLOWOFFLOAD.c
+@@ -11,6 +11,7 @@
+ #include <linux/netfilter/xt_FLOWOFFLOAD.h>
+ #include <linux/if_vlan.h>
+ #include <net/ip.h>
++#include <net/ipv6.h>
+ #include <net/netfilter/nf_conntrack.h>
+ #include <net/netfilter/nf_conntrack_extend.h>
+ #include <net/netfilter/nf_conntrack_helper.h>
+@@ -250,6 +251,16 @@ xt_flowoffload_skip(struct sk_buff *skb,
+ 			return true;
+ 	}
+ 
++	/* A flow keeps the output it resolved at offload time, but the
++	 * outputs of a multicast route change when listeners join or leave.
++	 */
++	switch (family) {
++	case NFPROTO_IPV4:
++		return ipv4_is_multicast(ip_hdr(skb)->daddr);
++	case NFPROTO_IPV6:
++		return ipv6_addr_is_multicast(&ipv6_hdr(skb)->daddr);
++	}
++
+ 	return false;
+ }
+ 
